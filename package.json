@@ -1,0 +1,51 @@
+{
+  "name": "rag",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "setup": "tsx src/scripts/setup.ts",
+    "parse:test": "tsx src/scripts/testParser.ts",
+    "index:laws": "tsx src/scripts/indexLaws.ts",
+    "search": "tsx src/scripts/searchLaws.ts",
+    "chat": "tsx src/scripts/chatBot.ts",
+    "model:download": "tsx src/scripts/downloadModel.ts",
+    "model:select": "tsx src/scripts/selectModel.ts",
+    "db:migrate": "tsx src/scripts/migrateQdrantToLanceDb.ts",
+    "db:pack": "tsx src/scripts/packageDb.ts",
+    "db:release": "tsx src/scripts/releaseDb.ts",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,UI\" -c \"blue,green\" \"pnpm run dev:server\" \"pnpm run dev:ui\"",
+    "dev:ui": "vite",
+    "build:ui": "vite build",
+    "dev:server": "tsx watch --include .env src/server/ragServer.ts",
+    "tauri": "tauri"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.33.4",
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
+    "@lancedb/lancedb": "^0.40.0",
+    "@qdrant/js-client-rest": "^1.19.0",
+    "dotenv": "^18.0.8",
+    "gray-matter": "^4.0.3",
+    "lucide-react": "^1.59.0",
+    "node-llama-cpp": "^3.22.2",
+    "onnxruntime-node": "^1.30.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/cli": "^2.12.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}
