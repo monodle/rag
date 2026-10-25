@@ -3,11 +3,17 @@ import { spawnSync } from 'node:child_process';
 import {
   ARCHIVE_FILE_PATH,
   CHECKSUM_FILE_PATH,
-  calculateSha256,
   packageDatabase,
 } from './packageDb.js';
+import { calculateSha256 } from '../utils/fileUtils.js';
+import {
+  DEFAULT_LANCEDB_RELEASE_TAG,
+  LANCEDB_ARCHIVE_FILE_NAME,
+  APP_CONFIG,
+  TOTAL_INDEXED_ARTICLES_ESTIMATE,
+} from '../config/constants.js';
 
-const DEFAULT_RELEASE_TAG = 'data-v1';
+const DEFAULT_RELEASE_TAG = DEFAULT_LANCEDB_RELEASE_TAG;
 
 /**
  * gh CLI를 통해 아카이브된 법령 벡터 데이터베이스를 GitHub Releases에 자동 배포합니다.
@@ -61,7 +67,7 @@ async function releaseDatabase() {
     const title = '대한민국 법령 20만 조문 벡터 데이터베이스 (LanceDB)';
     const notes = [
       '## ⚖️ Korean Laws Vector Database (LanceDB)',
-      '- **데이터 규모**: 대한민국 현행 법령 206,447개 조문 청크',
+      `- **데이터 규모**: 대한민국 현행 법령 ${TOTAL_INDEXED_ARTICLES_ESTIMATE.toLocaleString()}개 조문 청크`,
       '- **임베딩 모델**: google/embeddinggemma-2 (768차원 Cosine)',
       '- **포맷**: Apache Arrow / Lance 컬럼형 온디바이스 포맷',
       `- **SHA256 체크섬**: \`${sha256}\``,
@@ -95,8 +101,8 @@ async function releaseDatabase() {
   const repoView = spawnSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
     encoding: 'utf-8',
   });
-  const repoName = repoView.stdout.trim() || 'monodle/rag';
-  const downloadUrl = `https://github.com/${repoName}/releases/download/${releaseTag}/korean_laws_lancedb.tar.gz`;
+  const repoName = repoView.stdout.trim() || APP_CONFIG.githubRepo;
+  const downloadUrl = `https://github.com/${repoName}/releases/download/${releaseTag}/${LANCEDB_ARCHIVE_FILE_NAME}`;
 
   console.log('\n' + '='.repeat(70));
   console.log('🎉 [배포 완료] GitHub Releases 배포가 성공적으로 완료되었습니다!');

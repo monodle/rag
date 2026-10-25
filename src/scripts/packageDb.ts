@@ -1,46 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { LANCEDB_DIR } from '../config/constants.js';
+import { LANCEDB_DIR, LANCEDB_ARCHIVE_FILE_NAME } from '../config/constants.js';
+import { LanceDbService } from '../indexer/lanceDbService.js';
+import { calculateSha256, getDirSizeBytesSync } from '../utils/fileUtils.js';
+import { formatBytes } from '../utils/formatUtils.js';
 
-export const ARCHIVE_OUTPUT_DIR = path.resolve(process.cwd(), 'data');
-export const ARCHIVE_FILE_NAME = 'korean_laws_lancedb.tar.gz';
+const ARCHIVE_OUTPUT_DIR = path.resolve(process.cwd(), 'data');
+const ARCHIVE_FILE_NAME = LANCEDB_ARCHIVE_FILE_NAME;
 export const ARCHIVE_FILE_PATH = path.join(ARCHIVE_OUTPUT_DIR, ARCHIVE_FILE_NAME);
 export const CHECKSUM_FILE_PATH = `${ARCHIVE_FILE_PATH}.sha256`;
-
-/**
- * 디렉터리의 전체 용량을 바이트 단위로 계산합니다.
- */
-function getDirSizeBytes(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) {
-    return 0;
-  }
-  let totalSize = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      totalSize += getDirSizeBytes(fullPath);
-    } else {
-      totalSize += fs.statSync(fullPath).size;
-    }
-  }
-  return totalSize;
-}
-
-/**
- * 대용량 파일의 SHA256 체크섬을 스트리밍 방식으로 계산합니다.
- */
-export async function calculateSha256(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
-  });
-}
 
 /**
  * data/lancedb/ 디렉터리를 tar.gz 포맷으로 압축하고 SHA256 해시를 생성합니다.
@@ -54,9 +23,18 @@ export async function packageDatabase(): Promise<{ archivePath: string; sha256: 
     throw new Error(`LanceDB 데이터베이스 디렉터리가 없습니다: ${LANCEDB_DIR}\n먼저 'pnpm db:migrate'를 실행해 주세요.`);
   }
 
-  const rawSizeBytes = getDirSizeBytes(LANCEDB_DIR);
-  const rawSizeMB = (rawSizeBytes / (1024 * 1024)).toFixed(1);
-  console.log(`📁 원본 LanceDB 디렉터리: ${LANCEDB_DIR} (${rawSizeMB} MB)`);
+  // 패키징 전 구버전 트랜잭션 파일 정리 및 최적화
+  try {
+    console.log('🧹 LanceDB 테이블 최적화 및 오래된 트랜잭션 버전 정리 중...');
+    const service = LanceDbService.getInstance();
+    const table = await service.getTable();
+    await table.optimize({ cleanupOlderThan: new Date() });
+  } catch (err) {
+    console.warn('⚠️ 테이블 최적화 건너뜀:', err);
+  }
+
+  const rawSizeBytes = getDirSizeBytesSync(LANCEDB_DIR);
+  console.log(`📁 원본 LanceDB 디렉터리: ${LANCEDB_DIR} (${formatBytes(rawSizeBytes)})`);
   console.log(`🎯 출력 아카이브 파일: ${ARCHIVE_FILE_PATH}`);
 
   const startTime = Date.now();
@@ -88,8 +66,8 @@ export async function packageDatabase(): Promise<{ archivePath: string; sha256: 
   const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
   console.log(`✅ 압축 완료! (소요 시간: ${elapsedSec}s)`);
-  console.log(`   - 압축 전 용량: ${rawSizeMB} MB`);
-  console.log(`   - 압축 후 용량: ${compressedSizeMB} MB (압축률: ${compressionRatio}% 절감)`);
+  console.log(`   - 압축 전 용량: ${formatBytes(rawSizeBytes)}`);
+  console.log(`   - 압축 후 용량: ${formatBytes(compressedSizeBytes)} (압축률: ${compressionRatio}% 절감)`);
 
   // SHA256 체크섬 계산
   console.log('\n🔐 SHA256 체크섬 계산 중...');

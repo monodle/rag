@@ -1,10 +1,10 @@
 import fs from 'node:fs';
-import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { updateEnvModel, formatBytes } from './selectModel.js';
+import { updateEnvModel } from './selectModel.js';
+import { formatBytes } from '../utils/formatUtils.js';
 import { fetchHfGgufList, downloadWithProgress } from './downloadModel.js';
 import { EmbeddingService } from '../indexer/embeddingService.js';
 import { QdrantService } from '../indexer/qdrantService.js';
@@ -16,7 +16,10 @@ import {
   QDRANT_PORT,
   DEFAULT_QDRANT_PORT,
   PRESET_MODELS,
+  VECTOR_STORE_TYPE,
+  DEFAULT_DEV_UI_PORT,
 } from '../config/constants.js';
+import { DbSyncService } from '../indexer/dbSyncService.js';
 
 /**
  * 터미널 프롬프트 질문 헬퍼
@@ -141,10 +144,58 @@ async function ensureDependencies(): Promise<void> {
 }
 
 /**
- * Step 3: Docker 및 Qdrant 벡터 데이터베이스 자동 설정
+ * Step 3: 벡터 데이터베이스 설정 (LanceDB 기본 / Qdrant 옵션)
+ */
+async function ensureVectorDatabase(rl: readline.Interface): Promise<void> {
+  console.log(`\n[3/7] ⚡ 벡터 데이터베이스 점검 (선택된 엔진: ${VECTOR_STORE_TYPE})...`);
+
+  if (VECTOR_STORE_TYPE === 'lancedb') {
+    const syncService = DbSyncService.getInstance();
+    const isReady = await syncService.isDatabaseReady();
+
+    if (isReady) {
+      console.log('  ✅ 내장 LanceDB 데이터베이스(20만 조문)가 이미 준비되어 있습니다. (Docker 불필요)');
+      return;
+    }
+
+    console.log('  ⚠️ 로컬 LanceDB 데이터가 없습니다.');
+    const answer = await ask(
+      rl,
+      '  👉 GitHub Releases에서 사전 구축된 20만 조문 벡터 DB를 지금 다운로드하시겠습니까? (Y/n): '
+    );
+
+    if (answer.toLowerCase() !== 'n') {
+      let lastPercent = -1;
+      syncService.onProgress((p) => {
+        if (p.status === 'downloading') {
+          if (p.percent !== lastPercent) {
+            lastPercent = p.percent;
+            process.stdout.write(
+              `\r  ⏳ 다운로드 진행 중: [${p.percent}%] ${p.downloadedMB}MB / ${p.totalMB}MB`
+            );
+          }
+        } else {
+          process.stdout.write(`\n  📌 ${p.message}\n`);
+        }
+      });
+
+      await syncService.syncDatabase();
+      console.log('  ✅ LanceDB 데이터베이스 동기화 완료!');
+    } else {
+      console.log('  💡 나중에 앱 실행 시 자동 다운로드되거나 `pnpm db:download`로 받을 수 있습니다.');
+    }
+    return;
+  }
+
+  // Qdrant인 경우 Docker 점검
+  await ensureDockerAndQdrant(rl);
+}
+
+/**
+ * Docker 및 Qdrant 컨테이너 점검 (Qdrant 모드 전용)
  */
 async function ensureDockerAndQdrant(rl: readline.Interface): Promise<void> {
-  console.log('\n[3/7] 🐳 Docker 및 Qdrant 벡터 데이터베이스 점검...');
+  console.log('\n  🐳 Docker 및 Qdrant 벡터 데이터베이스 점검...');
 
   // 1. Docker 설치 확인
   while (!isCommandAvailable('docker')) {
@@ -207,7 +258,7 @@ async function ensureDockerAndQdrant(rl: readline.Interface): Promise<void> {
 /**
  * Step 4: 법령 마크다운 데이터셋 다운로드 (RAW_LAWS_DIR)
  */
-async function ensureLegalDataset(rl: readline.Interface): Promise<void> {
+async function ensureLegalDataset(): Promise<void> {
   console.log(`\n[4/7] 📚 대한민국 법령 마크다운 데이터셋(${RAW_LAWS_DIR}) 확인...`);
   const rawsDir = RAW_LAWS_DIR;
 
@@ -285,13 +336,16 @@ async function ensureOnDeviceLlm(rl: readline.Interface): Promise<void> {
   const existingModels = fs.readdirSync(modelsDir).filter((f) => f.endsWith('.gguf'));
   if (existingModels.length > 0) {
     console.log(`  ✅ 이미 로컬 모델이 존재합니다: ${existingModels[0]}`);
-    const relPath = `./data/models/${existingModels[0]}`;
+    const fullModelPath = path.join(modelsDir, existingModels[0]);
+    const rawRel = path.relative(process.cwd(), fullModelPath);
+    const relPath = rawRel.startsWith('.') ? rawRel : `./${rawRel}`;
     await updateEnvModel(relPath);
     return;
   }
 
   const defaultPreset = PRESET_MODELS[0];
-  console.log('  💡 현재 data/models/ 디렉터리에 다운로드된 GGUF 모델이 없습니다.');
+  const displayModelsDir = path.relative(process.cwd(), modelsDir) || modelsDir;
+  console.log(`  💡 현재 ${displayModelsDir} 디렉터리에 다운로드된 GGUF 모델이 없습니다.`);
   console.log(`  - 추천 모델: ${defaultPreset.name}`);
   const answer = await ask(rl, `👉 추천 모델(${defaultPreset.name})을 지금 다운로드하시겠습니까? (Y/n): `);
 
@@ -318,7 +372,8 @@ async function ensureOnDeviceLlm(rl: readline.Interface): Promise<void> {
     console.log(`  🚀 모델 다운로드 시작: ${targetFile.path} (${formatBytes(targetFile.size)})`);
     await downloadWithProgress(downloadUrl, destPath, targetFile.size);
 
-    const relPath = `./data/models/${path.basename(targetFile.path)}`;
+    const rawRel = path.relative(process.cwd(), destPath);
+    const relPath = rawRel.startsWith('.') ? rawRel : `./${rawRel}`;
     await updateEnvModel(relPath);
     console.log(`  ✅ .env 모델 설정 완료 (ONDEVICE_LLM="${relPath}")`);
   } catch (err: any) {
@@ -346,7 +401,7 @@ async function ensureEmbeddingModel(): Promise<void> {
 /**
  * Step 7: 테스트용 필수 핵심 법령 Qdrant 인덱싱
  */
-async function indexSampleLaws(rl: readline.Interface): Promise<void> {
+async function indexSampleLaws(): Promise<void> {
   console.log('\n[7/7] ⚖️ 빠른 시작을 위한 필수 핵심 법령 Qdrant 인덱싱...');
   const targetLaws = '근로기준법,형법,민법,도로교통법';
   console.log(`  🎯 대상 법령: ${targetLaws}`);
@@ -385,11 +440,14 @@ async function main() {
   try {
     await checkEnvironment();
     await ensureDependencies();
-    await ensureDockerAndQdrant(rl);
-    await ensureLegalDataset(rl);
+    await ensureVectorDatabase(rl);
+    await ensureLegalDataset();
     await ensureOnDeviceLlm(rl);
     await ensureEmbeddingModel();
-    await indexSampleLaws(rl);
+
+    if (VECTOR_STORE_TYPE === 'qdrant') {
+      await indexSampleLaws();
+    }
 
     console.log('\n================================================================');
     console.log('🎉 모든 초기 설정 및 데이터베이스 구축이 완료되었습니다!');
@@ -400,7 +458,7 @@ async function main() {
     console.log('\n2. 데스크톱 앱 또는 웹 UI 실행 (터미널 2):');
     console.log('   $ pnpm tauri dev   (Tauri 데스크톱 앱)');
     console.log('   또는');
-    console.log('   $ pnpm dev:ui      (웹 브라우저 http://localhost:5173)\n');
+    console.log(`   $ pnpm dev:ui      (웹 브라우저 http://localhost:${DEFAULT_DEV_UI_PORT})\n`);
   } catch (err: any) {
     console.error('\n❌ 셋업 중 오류가 발생했습니다:', err);
   } finally {

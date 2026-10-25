@@ -1,5 +1,9 @@
-import { ScoredArticleChunk } from './qdrantService.js';
-import { LEGAL_RELEVANCE_THRESHOLD, MAX_REFERENCES } from '../config/constants.js';
+import { ScoredArticleChunk } from '../types/law.js';
+import {
+  LEGAL_RELEVANCE_THRESHOLD,
+  MAX_REFERENCES,
+  RELATIVE_SIMILARITY_RATIO,
+} from '../config/constants.js';
 import { ARTICLE_HEADER_LINE_REGEX } from '../types/lawRegex.js';
 
 
@@ -7,7 +11,7 @@ import { ARTICLE_HEADER_LINE_REGEX } from '../types/lawRegex.js';
  * 개정으로 인해 본문이 '삭제' 처리된 실효 조문인지 판별합니다 (SSOT).
  * 예: "삭제", "삭제 <2023.3.21>", "삭제 <2020.8.5>\n\n# 제6편...", "[본조삭제]" 등
  */
-export function isDeletedArticle(chunk: { content: string; articleTitle?: string }): boolean {
+function isDeletedArticle(chunk: { content: string; articleTitle?: string }): boolean {
   if (!chunk || !chunk.content) {
     return true;
   }
@@ -88,8 +92,8 @@ export function filterRelevantArticles(
     return [];
   }
 
-  // 최상위 점수의 88% 이상이면서 법령 임계치를 넘는 유효 조문만 채택 (최대 limit)
+  // 최상위 점수의 88%(RELATIVE_SIMILARITY_RATIO) 이상이면서 법령 임계치를 넘는 유효 조문만 채택 (최대 limit)
   return validChunks
-    .filter((c) => c.score >= LEGAL_RELEVANCE_THRESHOLD && c.score >= topScore * 0.88)
+    .filter((c) => c.score >= LEGAL_RELEVANCE_THRESHOLD && c.score >= topScore * RELATIVE_SIMILARITY_RATIO)
     .slice(0, limit);
 }

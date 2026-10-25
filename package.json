@@ -1,5 +1,5 @@
 {
-  "name": "rag",
+  "name": "korean-law-chat",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -14,16 +14,25 @@
     "db:migrate": "tsx src/scripts/migrateQdrantToLanceDb.ts",
     "db:pack": "tsx src/scripts/packageDb.ts",
     "db:release": "tsx src/scripts/releaseDb.ts",
+    "db:download": "tsx src/scripts/downloadDb.ts",
     "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,UI\" -c \"blue,green\" \"pnpm run dev:server\" \"pnpm run dev:ui\"",
     "dev:ui": "vite",
     "build:ui": "vite build",
+    "build:server": "esbuild src/server/ragServer.ts --bundle --platform=node --target=node22 --format=esm --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" --outfile=dist-server/ragServer.mjs --external:@lancedb/lancedb --external:node-llama-cpp --external:onnxruntime-node --external:@huggingface/transformers",
+    "sync:version": "node scripts/sync-version.js",
     "dev:server": "tsx watch --include .env src/server/ragServer.ts",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri-cli.js",
+    "engine:pack": "tsx src/scripts/packageEngine.ts",
+    "engine:release": "tsx src/scripts/packageEngine.ts --upload",
+    "build:mac": "tsx src/scripts/buildRelease.ts --platform mac",
+    "build:win": "tsx src/scripts/buildRelease.ts --platform win",
+    "build:release": "tsx src/scripts/buildRelease.ts",
+    "release:app": "tsx src/scripts/releaseInstallers.ts",
+    "release:app:all": "tsx src/scripts/releaseInstallers.ts --all"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.33.4",
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
     "@lancedb/lancedb": "^0.40.0",
@@ -37,13 +46,13 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/cli": "^2.12.3",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"

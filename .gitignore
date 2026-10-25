@@ -3,7 +3,6 @@
 ############################################################
 # 데이터 및 분석용 대용량 파일
 data/*
-!data/prompts/
 attach/data/
 attach/pull/
 *.csv
@@ -24,6 +23,8 @@ node_modules/
 # 🚀 주요 프레임워크 빌드 및 정적 결과물
 dist/
 dist-web/
+dist-server/
+dist-engine/
 build/
 .next/
 .nuxt/
@@ -167,6 +168,7 @@ log.md
 playwright-report/
 release/
 
+docs/
 data/models/
 data/raws/
 data/.indexed_laws.json

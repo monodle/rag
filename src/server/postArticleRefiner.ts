@@ -1,29 +1,16 @@
-import { ScoredArticleChunk } from '../indexer/qdrantService.js';
-import { ReferenceArticle } from '../types/law.js';
-import { extractArticleNumbers } from '../types/lawRegex.js';
-import { MAX_REFERENCES, MIN_GUARANTEED_REFS, MIN_REFERENCE_SCORE_THRESHOLD } from '../config/constants.js';
-
-export { extractArticleNumbers };
-
-/**
- * 하위 호환성을 위한 참조 타입 별칭 (SSOT: ReferenceArticle)
- */
-export type RefinedReference = ReferenceArticle;
-
-/**
- * 한국어 조사 및 일반 불용어 세트
- */
-const KOREAN_STOPWORDS = new Set([
-  '이', '그', '저', '것', '수', '등', '및', '또는', '관련', '대한', '대해', '경우',
-  '따라', '의거', '규정', '따른', '의한', '위한', '통해', '하여', '하고', '하며',
-  '있습니다', '합니다', '됩니다', '입니다', '할', '수', '있는', '없는', '있으며',
-  '경우에는', '관하여', '법률', '법령', '기준', '사항', '내용', '따르면', '대하여'
-]);
+import { ReferenceArticle, ScoredArticleChunk } from '../types/law.js';
+import { extractArticleNumbers, KOREAN_STOPWORDS } from '../types/lawRegex.js';
+import {
+  MAX_REFERENCES,
+  MIN_GUARANTEED_REFS,
+  MIN_REFERENCE_SCORE_THRESHOLD,
+  MIN_SIMILARITY_FLOOR,
+} from '../config/constants.js';
 
 /**
  * 텍스트에서 핵심 법률 키워드를 추출합니다 (2글자 이상, 불용어 제외).
  */
-export function extractKeywords(text: string): string[] {
+function extractKeywords(text: string): string[] {
   if (!text) return [];
 
   // 특수문자 제거 후 공백 단위 분리
@@ -41,12 +28,10 @@ export function extractKeywords(text: string): string[] {
   return Array.from(new Set(keywords));
 }
 
-export { MIN_GUARANTEED_REFS };
-
 /**
  * 1차 검색된 후보 조문 목록 중, 실제 생성된 답변 텍스트(메인 키워드 및 명시적 조문 인용)를
  * 바탕으로 가장 관련성이 높은 근거 법조문을 재평가(Re-ranking) 및 엄격히 선별합니다 (SSOT).
- * 코사인 유사도 79%(MIN_REFERENCE_SCORE_THRESHOLD) 이상인 유효 조문만 근거로 노출합니다.
+ * 코사인 유사도 74%(MIN_REFERENCE_SCORE_THRESHOLD) 이상인 유효 조문만 근거로 노출합니다.
  * 
  * @param answer LLM이 생성한 최종 답변 텍스트
  * @param candidateChunks 1차 벡터 검색에서 추출된 후보 조문 목록
@@ -68,7 +53,7 @@ export function refineReferencesByAnswer(
   if (eligibleChunks.length === 0 && candidateChunks.length > 0) {
     const topScore = candidateChunks[0].score;
     eligibleChunks = candidateChunks
-      .filter((sc) => sc.score >= Math.max(0.65, topScore - 0.05))
+      .filter((sc) => sc.score >= Math.max(MIN_SIMILARITY_FLOOR, topScore - 0.05))
       .slice(0, MIN_GUARANTEED_REFS);
   }
   if (eligibleChunks.length === 0) {
@@ -94,7 +79,7 @@ export function refineReferencesByAnswer(
   const citedArticleNumbers = extractArticleNumbers(answer);
   const answerKeywords = extractKeywords(answer);
 
-  // 3. 후보 조문 재평가 (79% 이상 적격 조문 대상)
+  // 3. 후보 조문 재평가 (74% 이상 적격 조문 대상)
   const evaluated = eligibleChunks.map((sc) => {
     const chunk = sc.chunk;
     const reasons: string[] = [];

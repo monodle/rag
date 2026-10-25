@@ -10,6 +10,7 @@ import {
   LANCEDB_TABLE_NAME,
   EMBEDDING_DIMENSION,
 } from '../config/constants.js';
+import { getDirSizeBytesSync } from '../utils/fileUtils.js';
 
 interface LanceLawRecord {
   id: string;
@@ -25,27 +26,10 @@ interface LanceLawRecord {
   status: string;
   sourceUrl: string;
   filePath: string;
+  [key: string]: unknown;
 }
 
-/**
- * 디렉터리의 전체 용량을 바이트 단위로 재귀 계산합니다.
- */
-function getDirSizeBytes(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) {
-    return 0;
-  }
-  let totalSize = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      totalSize += getDirSizeBytes(fullPath);
-    } else {
-      totalSize += fs.statSync(fullPath).size;
-    }
-  }
-  return totalSize;
-}
+
 
 /**
  * Docker Qdrant에 저장된 기구축 벡터 및 조문 데이터를
@@ -94,7 +78,7 @@ async function runMigration() {
 
   // 3. Qdrant Scroll API를 이용한 배치 스트리밍 및 적재
   const BATCH_SIZE = 2000;
-  let nextOffset: string | number | undefined = undefined;
+  let nextOffset: Record<string, unknown> | string | number | null | undefined = undefined;
   let processedCount = 0;
   let table: lancedb.Table | null = null;
 
@@ -177,7 +161,7 @@ async function runMigration() {
   }
 
   const finalRowCount = await table.countRows();
-  const dirSizeMB = (getDirSizeBytes(LANCEDB_DIR) / (1024 * 1024)).toFixed(1);
+  const dirSizeMB = (getDirSizeBytesSync(LANCEDB_DIR) / (1024 * 1024)).toFixed(1);
   const totalElapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
   console.log('='.repeat(70));

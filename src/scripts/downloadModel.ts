@@ -5,32 +5,14 @@ import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
-import { formatBytes, updateEnvModel } from './selectModel.js';
+import { formatBytes } from '../utils/formatUtils.js';
 import { MODELS_DIR, PRESET_MODELS } from '../config/constants.js';
-export { PRESET_MODELS };
+import { ModelDownloaderService } from '../server/modelDownloaderService.js';
+import type { HfGgufItem } from '../types/law.js';
+import { updateEnvModel } from './selectModel.js';
 
-interface HfTreeItem {
-  type: string;
-  path: string;
-  size: number;
-}
-
-export async function fetchHfGgufList(repoId: string): Promise<HfTreeItem[]> {
-  const url = `https://huggingface.co/api/models/${repoId}/tree/main`;
-  const res = await fetch(url);
-
-  if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(`저장소를 찾을 수 없습니다: ${repoId}`);
-    }
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(`접근 권한이 필요하거나 비공개/Gated 저장소입니다: ${repoId}`);
-    }
-    throw new Error(`Hugging Face API 오류 (${res.status} ${res.statusText})`);
-  }
-
-  const items = (await res.json()) as HfTreeItem[];
-  return items.filter((item) => item.type === 'file' && item.path.endsWith('.gguf'));
+export async function fetchHfGgufList(repoId: string): Promise<HfGgufItem[]> {
+  return await ModelDownloaderService.getInstance().fetchHfGgufList(repoId);
 }
 
 export async function downloadWithProgress(
@@ -177,7 +159,8 @@ async function main() {
 
     console.log('🎉 다운로드가 완료되었습니다!');
 
-    const relPath = `./data/models/${path.basename(selectedFile.path)}`;
+    const rawRel = path.relative(process.cwd(), destPath);
+    const relPath = rawRel.startsWith('.') ? rawRel : `./${rawRel}`;
     const applyNow = await ask(
       rl,
       `\n👉 지금 바로 이 모델을 .env에 기본 모델로 적용하시겠습니까? (Y/n): `
@@ -188,7 +171,7 @@ async function main() {
       console.log(`\n✅ .env 설정이 완료되었습니다!`);
       console.log(`   USE_ONDEVICE_LLM=true`);
       console.log(`   ONDEVICE_LLM="${relPath}"`);
-      console.log(`   (서버 구동 시 이 모델이 Metal GPU로 즉시 로드됩니다.)\n`);
+      console.log(`   (서버 구동 시 이 모델이 하드웨어 가속 엔진(Metal/CUDA/Vulkan/CPU)으로 즉시 로드됩니다.)\n`);
     } else {
       console.log(`\n💡 나중에 'pnpm model:select' 명령어로 언제든지 이 모델을 활성화할 수 있습니다.\n`);
     }

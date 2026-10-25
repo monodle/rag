@@ -1,4 +1,4 @@
-import { ScoredArticleChunk } from '../indexer/qdrantService.js';
+import type { ScoredArticleChunk } from '../types/law.js';
 
 export interface StatuteGroupSummary {
   lawName: string;
@@ -11,6 +11,16 @@ export interface StatuteGroupSummary {
     score: number;
   }>;
 }
+
+/**
+ * 법령 단위 집계 및 후보군 선별 기본 설정 상수 (Single Source of Truth)
+ */
+export const DEFAULT_LAW_AGGREGATION_CONFIG = {
+  maxLaws: 3,
+  maxPerLaw: 2,
+  targetCandidateCount: 6,
+  alpha: 0.025,
+} as const;
 
 export interface LawAggregationOptions {
   /**
@@ -53,7 +63,7 @@ export interface LawAggregationResult {
  *     "공동주택관리법 시행규칙" ➔ "공동주택관리법"
  *     "영유아보육법" ➔ "영유아보육법"
  */
-export function getRootLawName(lawName: string): string {
+function getRootLawName(lawName: string): string {
   const trimmed = (lawName || '').trim();
   const normalized = trimmed.replace(
     /\s+(시행령|시행규칙|운영규정|사건사무규칙|수사규칙|관리규칙|규정|규칙)$/i,
@@ -83,10 +93,10 @@ export function aggregateAndSelectCandidates(
     };
   }
 
-  const maxLaws = options.maxLaws ?? 3;
-  const maxPerLaw = options.maxPerLaw ?? 2;
-  const targetCandidateCount = options.targetCandidateCount ?? 6;
-  const alpha = options.alpha ?? 0.025;
+  const maxLaws = options.maxLaws ?? DEFAULT_LAW_AGGREGATION_CONFIG.maxLaws;
+  const maxPerLaw = options.maxPerLaw ?? DEFAULT_LAW_AGGREGATION_CONFIG.maxPerLaw;
+  const targetCandidateCount = options.targetCandidateCount ?? DEFAULT_LAW_AGGREGATION_CONFIG.targetCandidateCount;
+  const alpha = options.alpha ?? DEFAULT_LAW_AGGREGATION_CONFIG.alpha;
 
   // 1. 모법(Root Law) 기준 Group By 구성
   const lawGroupMap = new Map<string, ScoredArticleChunk[]>();

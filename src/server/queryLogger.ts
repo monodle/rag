@@ -1,6 +1,9 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { LOGS_DIR } from '../config/constants.js';
+import type { ReferenceArticle } from '../types/law.js';
+import type { StatuteGroupSummary } from './lawAggregator.js';
 
 export interface QueryAnalysisLogData {
   systemPrompt?: string;
@@ -11,7 +14,7 @@ export interface QueryAnalysisLogData {
   searchTargetQuery: string;
 }
 
-export interface VectorChunkSnippet {
+interface VectorChunkSnippet {
   lawName: string;
   articleNumber: string;
   articleTitle?: string;
@@ -27,13 +30,6 @@ export interface VectorSearchLogData {
   filteredCount: number;
 }
 
-export interface StatuteGroupSnippet {
-  lawName: string;
-  maxScore: number;
-  matchCount: number;
-  combinedScore: number;
-}
-
 export interface RerankLogData {
   systemPrompt?: string;
   prompt: string;
@@ -42,7 +38,7 @@ export interface RerankLogData {
   beforeTopLaw?: string;
   afterTopLaw?: string;
   isPromoted: boolean;
-  statuteSummaries?: StatuteGroupSnippet[];
+  statuteSummaries?: StatuteGroupSummary[];
 }
 
 export interface StepLogData {
@@ -56,13 +52,7 @@ export interface StepLogData {
 
 export interface FinalResultLogData {
   fullAnswer: string;
-  references: Array<{
-    lawName: string;
-    articleNumber: string;
-    articleTitle?: string;
-    score: number;
-    matchReasons?: string[];
-  }>;
+  references: Array<Pick<ReferenceArticle, 'lawName' | 'articleNumber' | 'articleTitle' | 'score' | 'matchReasons'>>;
   modelName?: string;
   engine?: string;
   elapsedMs: number;
@@ -78,7 +68,7 @@ function pad2(n: number): string {
 /**
  * Date 객체를 yyyymmddhhiiss 포맷 문자열로 변환합니다.
  */
-export function formatTimestampFileName(date: Date): string {
+function formatTimestampFileName(date: Date): string {
   const yyyy = date.getFullYear();
   const mm = pad2(date.getMonth() + 1);
   const dd = pad2(date.getDate());
@@ -91,7 +81,7 @@ export function formatTimestampFileName(date: Date): string {
 /**
  * Date 객체를 가독성 좋은 KST 일시 포맷 문자열로 변환합니다.
  */
-export function formatReadableDateTime(date: Date): string {
+function formatReadableDateTime(date: Date): string {
   const yyyy = date.getFullYear();
   const mm = pad2(date.getMonth() + 1);
   const dd = pad2(date.getDate());
@@ -160,11 +150,15 @@ export class QueryLogSession {
    * 동시 쓰기(Race Condition)를 방지하는 Promise 큐 기반 비동기 자동 저장 트리거
    */
   public triggerPersist(): void {
+    const isFirstCreation = !this.targetPath;
     this.writeQueue = this.writeQueue
       .then(async () => {
         const filePath = await this.resolveTargetPath();
         const content = this.toMarkdown();
         await fs.writeFile(filePath, content, 'utf-8');
+        if (isFirstCreation) {
+          await QueryLogger.pruneOldLogs(20);
+        }
       })
       .catch((err) => {
         console.error('❌ [QueryLogger] 로그 점진적 저장 오류:', err);
@@ -460,5 +454,59 @@ export class QueryLogger {
     // 세션 인스턴스 생성 즉시 초기 파일 생성 (실시간 추적 시작)
     session.triggerPersist();
     return session;
+  }
+
+  /**
+   * logs/ 디렉터리 내 로그 파일(.log) 중 최신 maxKeep개만 남기고 오래된 파일을 안전하게 삭제합니다.
+   * 
+   * @param maxKeep 유지할 최신 로그 파일 최대 개수 (기본값: 20개)
+   */
+  public static async pruneOldLogs(maxKeep: number = 20): Promise<void> {
+    try {
+      if (!fsSync.existsSync(LOGS_DIR)) {
+        return;
+      }
+
+      const entries = await fs.readdir(LOGS_DIR, { withFileTypes: true });
+      const logFiles = entries
+        .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.log'))
+        .map((e) => e.name);
+
+      if (logFiles.length <= maxKeep) {
+        return;
+      }
+
+      // 파일 수정 시간(mtime) 및 파일명 기준 최신순 정렬
+      const fileStats = await Promise.all(
+        logFiles.map(async (name) => {
+          try {
+            const stat = await fs.stat(path.join(LOGS_DIR, name));
+            return { name, mtimeMs: stat.mtimeMs };
+          } catch {
+            return { name, mtimeMs: 0 };
+          }
+        })
+      );
+
+      fileStats.sort((a, b) => {
+        if (b.mtimeMs !== a.mtimeMs) {
+          return b.mtimeMs - a.mtimeMs;
+        }
+        return b.name.localeCompare(a.name);
+      });
+
+      const filesToDelete = fileStats.slice(maxKeep);
+      for (const item of filesToDelete) {
+        try {
+          await fs.unlink(path.join(LOGS_DIR, item.name));
+        } catch {
+          // 개별 파일 삭제 실패 시 스킵
+        }
+      }
+
+      console.log(`🧹 [QueryLogger] logs/ 보관 한도(${maxKeep}개) 초과 파일 ${filesToDelete.length}건 자동 정리 완료`);
+    } catch (err) {
+      console.warn('⚠️ [QueryLogger] 오래된 로그 정리 중 경고:', err);
+    }
   }
 }

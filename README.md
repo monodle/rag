@@ -62,7 +62,7 @@ Tauri v2 기반의 고성능 크로스플랫폼 데스크톱 앱과 모던 반�
     - 조문 단위 정확 검색 및 하이브리드 필터링
                   │
                   ▼
-[4. 대화형 RAG 백엔드 서버 (RagServer, Port: 3100)]
+[4. 대화형 RAG 백엔드 서버 (RagServer, Dev: 34200, Prod: 34100)]
     - SSE(Server-Sent Events) 스트리밍 토큰 전송
     - 법률 관련도 임계치(0.69) 검사 (비법률 질의 필터링)
     - 온디바이스 LLM(node-llama-cpp Metal/CUDA 가속) 로컬 추론
@@ -84,7 +84,7 @@ Tauri v2 기반의 고성능 크로스플랫폼 데스크톱 앱과 모던 반�
 | **RAG 백엔드** | **Node.js 22+**, **HTTP Streaming (SSE)** | 초경량 네이티브 HTTP 서버 및 실시간 조문 스트리밍 |
 | **임베딩 모델** | **`google/embeddinggemma-2`** (ONNX 768d) | `@huggingface/transformers` 로컬 추론 (완전 무료, 8,192 토큰) |
 | **온디바이스 LLM** | **`node-llama-cpp`** (GGUF 추론 엔진) | Apple Silicon Metal / NVIDIA CUDA 가속 지원 (EXAONE 4.0, Gemma 4 등) |
-| **벡터 DB** | **Qdrant** (`qdrant/qdrant`) | 고속 Cosine 유사도 벡터 인덱싱 & 메타데이터 페이로드 필터링 |
+| **벡터 DB** | **LanceDB** (기본, 로컬 임베디드) / **Qdrant** | Docker 불필요, 고속 Apache Arrow 컬럼형 벡터 DB & 20만 조문 릴리즈 동기화 지원 |
 | **데이터 파서** | **`gray-matter`**, 커스텀 정규식 조문 파서 | 마크다운 Frontmatter 파싱 및 조문/항/호 정밀 추출 |
 
 ---
@@ -123,8 +123,12 @@ rag/
 │       ├── downloadModel.ts  # HuggingFace 온디바이스 GGUF 대화형 다운로더
 │       └── selectModel.ts    # 다운로드된 로컬 GGUF 모델 선택기
 ├── src-tauri/                # Tauri 2.0 Rust 백엔드 설정 및 바이너리
-├── setup.sh                  # macOS / Linux 원클릭 자동 셋업 쉘 스크립트
-├── setup.bat                 # Windows 원클릭 자동 셋업 배치 파일
+├── scripts/                  # 빌드 및 셋업 유틸리티 스크립트
+│   ├── setup.sh              # macOS / Linux 원클릭 자동 셋업 쉘 스크립트
+│   ├── setup.bat             # Windows 원클릭 자동 셋업 배치 파일
+│   ├── build-win.bat         # Windows 가상머신 전용 자동 빌드 파이프라인
+│   ├── sync-version.js       # 버전 동기화 스크립트
+│   └── tauri-cli.js          # Tauri CLI 크로스플랫폼 래퍼
 ├── .env.example              # 환경 변수 설정 템플릿
 ├── package.json
 └── README.md
@@ -156,8 +160,8 @@ rag/
 
 ```bash
 # 옵션 1. 저장소 클론 직후 바로 실행할 때 (Node/pnpm 검사 및 패키지 자동 설치 포함)
-./setup.sh        # macOS / Linux
-setup.bat         # Windows (명령 프롬프트 또는 더블클릭)
+./scripts/setup.sh        # macOS / Linux
+scripts\setup.bat         # Windows (명령 프롬프트 또는 더블클릭)
 
 # 옵션 2. pnpm 명령어로 직접 실행할 때 (모든 OS 공통: "setup": "tsx src/scripts/setup.ts")
 pnpm setup
@@ -216,8 +220,8 @@ QDRANT_COLLECTION=korean_laws
 # 법제처 오픈소스 법령 원본 데이터셋 Git 저장소 URL (기본값: https://github.com/legalize-kr/legalize-kr.git)
 LEGALIZE_KR_REPO_URL=https://github.com/legalize-kr/legalize-kr.git
 
-# RAG 로컬 백엔드 서버 포트
-PORT=3100
+# RAG 로컬 백엔드 서버 포트 (개발: 34200, 운용: 34100)
+PORT=34200
 
 # 질의 시 참조할 최대 법조문 수 (기본값: 4)
 MAX_REFERENCES=4
@@ -225,13 +229,13 @@ MAX_REFERENCES=4
 # 법령 원본 마크다운 데이터셋 경로 (기본값: ./data/raws)
 RAW_LAWS_DIR=./data/raws
 
-# 시스템 프롬프트 마크다운 파일 경로 (기본값: ./data/prompts/system_prompt.md)
-SYSTEM_PROMPT_PATH=./data/prompts/system_prompt.md
+# 시스템 프롬프트 마크다운 파일 경로 (기본값: ./prompts/1000-system_prompt.md)
+SYSTEM_PROMPT_PATH=./prompts/1000-system_prompt.md
 ```
 
 > [!TIP]
 > - **조문 검색 전용 모드**: GPU 메모리가 부족하거나 온디바이스 모델 다운로드 없이 **조문 검색 및 원문 인용 기능**만 빠르게 테스트하고 싶다면 `USE_ONDEVICE_LLM=false`로 설정하세요.
-> - **시스템 프롬프트 커스터마이징 & 핫 리로드 (Hot-reload)**: `data/prompts/system_prompt.md` 파일에서 LLM 어시스턴트의 답변 어조, 조문 인용 엄격성 규칙, 환각 방지 지침 등을 수정할 수 있습니다. 백엔드 서버를 재시작하지 않아도 파일 저장 즉시 새로운 프롬프트가 실시간 적용됩니다.
+> - **시스템 프롬프트 커스터마이징 & 핫 리로드 (Hot-reload)**: `prompts/1000-system_prompt.md` 파일에서 LLM 어시스턴트의 답변 어조, 조문 인용 엄격성 규칙, 환각 방지 지침 등을 수정할 수 있습니다. 백엔드 서버를 재시작하지 않아도 파일 저장 즉시 새로운 프롬프트가 실시간 적용됩니다.
 
 ---
 
@@ -338,14 +342,14 @@ pnpm index:laws --batch=64 --force
 ```bash
 pnpm tauri dev
 ```
-- 백엔드 RAG 서버(포트 3100)와 데스크톱 네이티브 윈도우가 **단 하나의 명령어로 함께 자동 구동**됩니다.
+- 백엔드 RAG 서버(포트 34200)와 데스크톱 네이티브 윈도우가 **단 하나의 명령어로 함께 자동 구동**됩니다.
 - 앱 창을 닫거나 터미널에서 `Ctrl+C`를 누르면 백엔드 서버도 함께 안전하게 종료됩니다.
 
 #### 🌐 옵션 B: 웹 브라우저에서 실행 (Rust 미설치 시)
 ```bash
 pnpm dev
 ```
-- 백엔드 서버(포트 3100)와 Vite 프론트엔드(포트 5173)가 동시에 실행되며, 브라우저에서 `http://localhost:5173`으로 접속할 수 있습니다.
+- 백엔드 서버(포트 34200)와 Vite 프론트엔드(포트 5173)가 동시에 실행되며, 브라우저에서 `http://localhost:5173`으로 접속할 수 있습니다.
 
 ---
 
@@ -355,16 +359,20 @@ pnpm dev
 
 | 스크립트 명령어 | 설명 |
 | :--- | :--- |
-| `pnpm setup` / `./setup.sh` / `setup.bat` | 환경점검/의존성/Docker/법령/모델/인덱싱 올인원 대화형 자동 셋업 (`"setup": "tsx src/scripts/setup.ts"`) |
+| `pnpm setup` / `./scripts/setup.sh` / `scripts\setup.bat` | 환경점검/의존성/Docker/법령/모델/인덱싱 올인원 대화형 자동 셋업 (`"setup": "tsx src/scripts/setup.ts"`) |
 | `pnpm tauri dev` | Tauri 2.0 데스크톱 앱 실행 (백엔드 서버 자동 통합 구동) |
 | `pnpm dev` | 웹 브라우저 개발 환경 구동 (백엔드 + Vite UI 동시 구동) |
-| `pnpm dev:server` | RAG HTTP 백엔드 서버 단독 실행 (포트 3100, SSE 스트리밍) |
+| `pnpm dev:server` | RAG HTTP 백엔드 서버 단독 실행 (개발 포트 34200, SSE 스트리밍) |
 | `pnpm dev:ui` | Vite 웹 프론트엔드 단독 구동 (`http://localhost:5173`) |
 | `pnpm index:laws` | 법령 마크다운 파싱 및 Qdrant 벡터 데이터베이스 인덱싱 |
 | `pnpm parse:test` | `data/raws` 디렉터리의 법령 파서 정상 동작 검증 |
 | `pnpm search "<질문>"` | UI 없이 터미널에서 즉시 유사 법조문 코사인 검색 테스트 |
 | `pnpm model:download` | Hugging Face 인기 GGUF 온디바이스 모델 대화형 다운로더 |
 | `pnpm model:select` | `data/models/` 내 보유 중인 GGUF 모델 선택 및 `.env` 반영 |
+| `pnpm db:download` | GitHub Releases에서 사전 구축된 20만 조문 LanceDB 벡터 데이터베이스 자동 다운로드 및 동기화 |
+| `pnpm db:migrate` | Docker Qdrant에 있는 기구축 벡터 데이터를 내장 LanceDB로 재임베딩 없이 고속 마이그레이션 |
+| `pnpm db:pack` | `data/lancedb`를 배포용 `korean_laws_lancedb.tar.gz`로 압축 및 SHA256 체크섬 생성 |
+| `pnpm db:release` | GitHub CLI(`gh`)를 통해 GitHub Releases에 압축 DB 에셋 자동 배포 |
 
 ---
 

@@ -5,7 +5,7 @@
  * - '개인정보 보호법' 등 띄어쓰기가 포함된 주요 개별 법률
  * - '○○법률', '○○법', '○○시행령', '○○시행규칙', '○○규정', '○○조례'
  */
-export const LAW_NAME_PATTERN =
+const LAW_NAME_PATTERN =
   '(?:(?:[가-힣0-9·]+(?:\\s+[가-힣0-9·]+){1,5}\\s*(?:등에\\s*관한\\s*법률|에\\s*관한\\s*법률|에\\s*관한\\s*특례법))|(?:개인정보\\s*보호법)|(?:[가-힣]{2,20}(?:법률|법|시행령|시행규칙|규정|조례)))';
 
 /**
@@ -26,20 +26,12 @@ export const IS_LAW_ARTICLE_REGEX = new RegExp(
 /**
  * 텍스트에서 단독 조문 번호(예: "제10조", "제10조의2")를 매칭하는 정규표현식
  */
-export const ARTICLE_NUMBER_REGEX = /제\s*(\d+(?:조의\d+|조))/g;
+const ARTICLE_NUMBER_REGEX = /제\s*(\d+(?:조의\d+|조))/g;
 
 /**
  * 한 줄 전체가 단독 조문 번호 및 괄호 제목 형태인지 판별하는 정규표현식 (예: "제10조", "제10조의2(구류)")
  */
 export const ARTICLE_HEADER_LINE_REGEX = /^제\s*\d+(?:조의\d+|조)?(?:\([^\)]*\))?$/;
-
-/**
- * 조문 번호 문자열에서 공백을 제거하여 표준 규격(예: "제 50 조" -> "제50조")으로 정규화합니다.
- */
-export function normalizeArticleNumber(raw: string): string {
-  if (!raw) return '';
-  return raw.replace(/\s+/g, '');
-}
 
 /**
  * 텍스트에서 언급되거나 인용된 조문 번호 목록(중복 제거)을 추출합니다 (SSOT).
@@ -65,27 +57,34 @@ export function extractArticleNumbers(text: string): Set<string> {
 }
 
 /**
- * 모델 파일명 또는 식별자로부터 UI 및 로그에 표시할 깔끔한 표시명을 파싱합니다 (SSOT).
- * 
- * @param rawModelName 원본 모델 경로 또는 식별자 (예: 'EXAONE-4.0-1.2B-Q4_K_M.gguf')
- * @returns 사용자 친화적 모델 표시명
+ * 마크다운 문서 파서용 조문 헤더 매칭 정규표현식 (Single Source of Truth)
+ * 예: "##### 제10조 (근로조건의 명시)", "##### 제10조의2"
  */
-export function formatModelDisplayName(rawModelName?: string): { title: string; quant: string } {
-  if (!rawModelName || !rawModelName.trim()) {
-    return { title: '온디바이스 LLM', quant: '' };
-  }
+export const ARTICLE_HEADER_MARKDOWN_REGEX = /^#####\s+(제\d+조(?:의\d+)?)(?:\s*\(([^)]+)\))?/;
 
-  const clean = rawModelName.trim().replace(/\.gguf$/i, '');
-  const quantMatch = clean.match(/[-_]([QqIi][0-9][A-Za-z0-9_]*)$/);
-  const quant = quantMatch ? quantMatch[1].toUpperCase() : '';
-  const baseName = quantMatch ? clean.slice(0, quantMatch.index) : clean;
+/**
+ * 사용자 질의 내 사법/형사/민사/제도 핵심 어휘 감지 정규표현식 (가드레일 단일 진실 공급원)
+ */
+export const OBVIOUS_LEGAL_KEYWORD_REGEX =
+  /(법|법령|규정|조례|처벌|죄|불법|위법|형사|민사|재판|소송|기소|고소|고발|벌금|과태료|형벌|징역|손해배상|합의금|근로기준|퇴직금|임금|주휴|해고|계약|임대|임차|전세|월세|부동산|사기|절도|횡령|점유|배임|폭행|상해|음주운전|교통사고|명예훼손|모욕)/i;
 
-  const title = baseName
-    .replace(/^onnx-community\//i, '')
-    .replace(/-ONNX$/i, '')
-    .replace(/-GGUF$/i, '')
-    .replace(/[-_]it$/i, '')
-    .replace(/[-_]Instruct$/i, '');
+/**
+ * 한국어 조사 및 일반 불용어 세트 (Single Source of Truth)
+ */
+export const KOREAN_STOPWORDS: ReadonlySet<string> = new Set([
+  '이', '그', '저', '것', '수', '등', '및', '또는', '관련', '대한', '대해', '경우',
+  '따라', '의거', '규정', '따른', '의한', '위한', '통해', '하여', '하고', '하며',
+  '있습니다', '합니다', '됩니다', '입니다', '할', '있는', '없는', '있으며',
+  '경우에는', '관하여', '법률', '법령', '기준', '사항', '내용', '따르면', '대하여',
+  '인가요', '무엇인가요', '어떻게', '때문에', '에서는', '으로', '에게', '에서',
+  '하면', '시키면', '없이', '타인'
+]);
 
-  return { title, quant };
-}
+/**
+ * 단어 단위 불용어 판별 정규표현식 (Single Source of Truth)
+ */
+export const KOREAN_STOPWORDS_REGEX =
+  /^(입니다|합니다|있습니다|없습니다|인가요|무엇인가요|어떻게|경우에는|대하여|통해|위하여|때문에|에서는|으로|에게|에서|하고|하면|시키면|없이|타인)$/i;
+
+
+

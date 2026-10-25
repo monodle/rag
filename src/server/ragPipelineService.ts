@@ -1,12 +1,12 @@
 import { EmbeddingService } from '../indexer/embeddingService.js';
-import { ScoredArticleChunk } from '../indexer/qdrantService.js';
 import { getVectorStoreService, IVectorStoreService } from '../indexer/vectorStore.js';
 import { LlmManager } from './llmManager.js';
 import { filterRelevantArticles } from '../indexer/lawArticleFilter.js';
 import { refineReferencesByAnswer } from './postArticleRefiner.js';
 import { getNoRelevantLawMessage, getNonLegalQueryMessage } from './promptManager.js';
 import { MAX_REFERENCES, VECTOR_CANDIDATE_LIMIT } from '../config/constants.js';
-import { ReferenceArticle, ChatResponseDto } from '../types/law.js';
+import { DEFAULT_LAW_AGGREGATION_CONFIG } from './lawAggregator.js';
+import { ReferenceArticle, ChatResponseDto, ScoredArticleChunk } from '../types/law.js';
 import { QueryLogger, QueryLogSession } from './queryLogger.js';
 
 export interface SearchArticlesResult {
@@ -172,7 +172,12 @@ export class RagPipelineService {
 
     // 2.5. 온디바이스 LLM 기반 질의 문맥 적합도 지능형 리랭킹 (Zero-Hardcoding Reranking)
     onStatus?.('⚖️ 질문 문맥 적합도 지능형 검토 중...');
-    const scoredChunks = await this.llmManager.rerankArticlesByRelevance(trimmed, filteredChunks, 6, logSession);
+    const scoredChunks = await this.llmManager.rerankArticlesByRelevance(
+      trimmed,
+      filteredChunks,
+      DEFAULT_LAW_AGGREGATION_CONFIG.targetCandidateCount,
+      logSession
+    );
 
     if (scoredChunks.length > 0 && filteredChunks.length > 0 && scoredChunks[0].chunk.id !== filteredChunks[0].chunk.id) {
       console.log(

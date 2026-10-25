@@ -1,24 +1,12 @@
 import crypto from 'node:crypto';
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { LawArticleChunk } from '../types/law.js';
+import type { LawArticleChunk, LawSearchOptions, ScoredArticleChunk } from '../types/law.js';
 import { QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION, EMBEDDING_DIMENSION } from '../config/constants.js';
 
 export interface QdrantConfig {
   url?: string;
   apiKey?: string;
   collectionName?: string;
-}
-
-export interface LawSearchOptions {
-  limit?: number;
-  scoreThreshold?: number;
-  lawName?: string;
-  articleNumber?: string;
-}
-
-export interface ScoredArticleChunk {
-  score: number;
-  chunk: LawArticleChunk;
 }
 
 export class QdrantService {
@@ -206,7 +194,18 @@ export class QdrantService {
   /**
    * 컬렉션 통계 및 상태 정보를 반환합니다.
    */
-  public async getCollectionInfo() {
-    return await this.client.getCollection(this.collectionName);
+  public async getCollectionInfo(): Promise<{ points_count: number; indexed_vectors_count: number }> {
+    const res = await this.client.getCollection(this.collectionName);
+    return {
+      points_count: typeof res.points_count === 'number' ? res.points_count : 0,
+      indexed_vectors_count: typeof res.indexed_vectors_count === 'number' ? res.indexed_vectors_count : 0,
+    };
+  }
+
+  /**
+   * 인덱싱된 법률 수를 반환합니다 (미지원 시 0).
+   */
+  public async getLawsCount(): Promise<number> {
+    return 0;
   }
 }

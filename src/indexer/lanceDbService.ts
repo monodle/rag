@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import * as lancedb from '@lancedb/lancedb';
-import { LawArticleChunk } from '../types/law.js';
+import type { LawArticleChunk, LawSearchOptions, ScoredArticleChunk } from '../types/law.js';
 import {
   LANCEDB_DIR,
   LANCEDB_TABLE_NAME,
   EMBEDDING_DIMENSION,
 } from '../config/constants.js';
-import { LawSearchOptions, ScoredArticleChunk } from './qdrantService.js';
 
 export interface LanceDbConfig {
   dbDir?: string;
@@ -21,6 +20,8 @@ export class LanceDbService {
   private dbPromise: Promise<lancedb.Connection> | null = null;
   private tablePromise: Promise<lancedb.Table> | null = null;
 
+  private cachedLawsCount: number | null = null;
+
   constructor(config: LanceDbConfig = {}) {
     this.dbDir = config.dbDir || LANCEDB_DIR;
     this.tableName = config.tableName || LANCEDB_TABLE_NAME;
@@ -34,6 +35,16 @@ export class LanceDbService {
   }
 
   /**
+   * DB 테이블 및 연결 캐시를 초기화합니다.
+   * (DB 동기화 완료 후 새로 생성된 테이블을 열기 위해 사용)
+   */
+  public resetCache(): void {
+    this.tablePromise = null;
+    this.dbPromise = null;
+    this.cachedLawsCount = null;
+  }
+
+  /**
    * LanceDB 데이터베이스 연결을 반환하며 싱글톤 연결을 유지합니다.
    */
   private async getDb(): Promise<lancedb.Connection> {
@@ -41,7 +52,10 @@ export class LanceDbService {
       if (!fs.existsSync(this.dbDir)) {
         fs.mkdirSync(this.dbDir, { recursive: true });
       }
-      this.dbPromise = lancedb.connect(this.dbDir);
+      this.dbPromise = lancedb.connect(this.dbDir).catch((err) => {
+        this.dbPromise = null;
+        throw err;
+      });
     }
     return await this.dbPromise;
   }
@@ -52,14 +66,19 @@ export class LanceDbService {
   public async getTable(): Promise<lancedb.Table> {
     if (!this.tablePromise) {
       this.tablePromise = (async () => {
-        const db = await this.getDb();
-        const tableNames = await db.tableNames();
-        if (!tableNames.includes(this.tableName)) {
-          throw new Error(
-            `LanceDB 테이블 [${this.tableName}]이 존재하지 않습니다. 먼저 마이그레이션(pnpm db:migrate)을 수행해 주세요.`
-          );
+        try {
+          const db = await this.getDb();
+          const tableNames = await db.tableNames();
+          if (!tableNames.includes(this.tableName)) {
+            throw new Error(
+              `LanceDB 테이블 [${this.tableName}]이 존재하지 않습니다. 먼저 동기화(pnpm db:sync) 또는 마이그레이션을 수행해 주세요.`
+            );
+          }
+          return await db.openTable(this.tableName);
+        } catch (err) {
+          this.tablePromise = null;
+          throw err;
         }
-        return await db.openTable(this.tableName);
       })();
     }
     return await this.tablePromise;
@@ -165,6 +184,26 @@ export class LanceDbService {
         points_count: 0,
         indexed_vectors_count: 0,
       };
+    }
+  }
+
+  /**
+   * 인덱싱된 전체 법령 중 고유 법률 수(distinct lawName)를 계산하여 반환합니다.
+   * 연산 결과를 메모리에 캐싱하여 후속 호출 시 즉각 반환합니다.
+   */
+  public async getLawsCount(): Promise<number> {
+    if (this.cachedLawsCount !== null && this.cachedLawsCount > 0) {
+      return this.cachedLawsCount;
+    }
+
+    try {
+      const table = await this.getTable();
+      const records = await table.query().select(['lawName']).toArray();
+      const uniqueLaws = new Set(records.map((r) => r.lawName).filter(Boolean));
+      this.cachedLawsCount = uniqueLaws.size;
+      return this.cachedLawsCount;
+    } catch {
+      return 0;
     }
   }
 

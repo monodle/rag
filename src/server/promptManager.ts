@@ -5,13 +5,11 @@ import {
   QUERY_ANALYSIS_PROMPT_PATH,
   RERANK_PROMPT_PATH,
   DRILLDOWN_PROMPT_PATH,
-  STEP_INTRO_PROMPT_PATH,
   STEP_BODY_PROMPT_PATH,
   STEP_CONCLUSION_PROMPT_PATH,
   MAX_LLM_CONTEXT_ARTICLES,
 } from '../config/constants.js';
-
-export { MAX_LLM_CONTEXT_ARTICLES };
+import type { ScoredArticleChunk } from '../types/law.js';
 
 interface PromptCacheEntry {
   content: string;
@@ -55,26 +53,17 @@ function renderTemplate(template: string, variables: Record<string, string>): st
 }
 
 /**
- * 메인 시스템 프롬프트를 data/prompts/system_prompt.md 파일에서 실시간 로드합니다.
+ * 메인 시스템 프롬프트를 prompts/1000-system_prompt.md 파일에서 실시간 로드합니다.
  */
 export function getSystemPrompt(customPath: string = SYSTEM_PROMPT_PATH): string {
   return loadPromptFile(customPath);
 }
 
-export interface MinimalScoredChunk {
-  chunk: {
-    lawName: string;
-    articleNumber: string;
-    articleTitle?: string;
-    content: string;
-  };
-}
-
 /**
  * 조문 목록을 RAG 프롬프트용 텍스트로 표준화 포맷팅합니다 (SSOT).
  */
-export function formatReferenceArticles(
-  scoredChunks: MinimalScoredChunk[],
+function formatReferenceArticles(
+  scoredChunks: ScoredArticleChunk[],
   maxArticles: number = MAX_LLM_CONTEXT_ARTICLES
 ): string {
   return scoredChunks
@@ -89,16 +78,16 @@ export function formatReferenceArticles(
 /**
  * 질문과 조문 목록을 결합하여 RAG 유저 메시지 본문을 구성합니다.
  */
-export function buildRagUserContent(query: string, scoredChunks: MinimalScoredChunk[]): string {
+export function buildRagUserContent(query: string, scoredChunks: ScoredArticleChunk[]): string {
   const contextArticles = formatReferenceArticles(scoredChunks);
   return `[참조 법령 조문]\n${contextArticles}\n\n[사용자 질문]\n${query}`;
 }
 
 /**
  * 본 답변(서론 -> 본론 -> 결론) 생성을 위한 통합 프롬프트
- * data/prompts/main_answer.md 파일 기반 핫 리로드
+ * prompts/1300-main_answer.md 파일 기반 핫 리로드
  */
-export function getMainAnswerPrompt(query: string, scoredChunks: MinimalScoredChunk[]): string {
+export function getMainAnswerPrompt(query: string, scoredChunks: ScoredArticleChunk[]): string {
   const contextArticles = formatReferenceArticles(scoredChunks);
   const template = loadPromptFile(MAIN_ANSWER_PROMPT_PATH);
   return renderTemplate(template, {
@@ -107,22 +96,10 @@ export function getMainAnswerPrompt(query: string, scoredChunks: MinimalScoredCh
   });
 }
 
-/**
- * 1단계: 서론(핵심 요약) 생성 프롬프트 (하위 호환)
- * data/prompts/step_intro.md 파일 기반 핫 리로드
- */
-export function getIntroStepPrompt(query: string, scoredChunks: MinimalScoredChunk[]): string {
-  const contextArticles = formatReferenceArticles(scoredChunks);
-  const template = loadPromptFile(STEP_INTRO_PROMPT_PATH);
-  return renderTemplate(template, {
-    context: contextArticles,
-    query: query.trim(),
-  });
-}
 
 /**
  * 2단계: 본론(법적 기준 및 요건) 보강 프롬프트 (세션 이어쓰기)
- * data/prompts/step_body.md 파일 기반 핫 리로드
+ * prompts/1500-step_body.md 파일 기반 핫 리로드
  */
 export function getBodyStepPrompt(): string {
   return loadPromptFile(STEP_BODY_PROMPT_PATH);
@@ -130,7 +107,7 @@ export function getBodyStepPrompt(): string {
 
 /**
  * 3단계: 결론(유의사항) 보강 프롬프트 (세션 이어쓰기)
- * data/prompts/step_conclusion.md 파일 기반 핫 리로드
+ * prompts/1600-step_conclusion.md 파일 기반 핫 리로드
  */
 export function getConclusionStepPrompt(): string {
   return loadPromptFile(STEP_CONCLUSION_PROMPT_PATH);
@@ -138,7 +115,7 @@ export function getConclusionStepPrompt(): string {
 
 /**
  * 4단계: 추천 후속 질문(드릴다운) 생성 프롬프트
- * data/prompts/drilldown.md 파일 기반 핫 리로드
+ * prompts/1700-drilldown.md 파일 기반 핫 리로드
  */
 export function getDrilldownStepPrompt(query: string, lawSummary: string): string {
   const template = loadPromptFile(DRILLDOWN_PROMPT_PATH);
@@ -164,22 +141,6 @@ export function sanitizeLlmOutput(text: string): string {
 }
 
 /**
- * 4단계 순차 파이프라인 프롬프트 (하위 호환)
- */
-export function getStepPrompts(
-  query: string,
-  scoredChunks: MinimalScoredChunk[],
-  context?: { lawSummary?: string }
-) {
-  return {
-    introPrompt: getIntroStepPrompt(query, scoredChunks),
-    bodyPrompt: getBodyStepPrompt(),
-    conclusionPrompt: getConclusionStepPrompt(),
-    drilldownPrompt: getDrilldownStepPrompt(query, context?.lawSummary || ''),
-  };
-}
-
-/**
  * 관련 조문 부재 시 안내 메시지 (SSOT)
  */
 export function getNoRelevantLawMessage(query: string): string {
@@ -196,7 +157,7 @@ export function getNonLegalQueryMessage(query: string): string {
 /**
  * LLM 비활성화 또는 오류 시 제공하는 표준 구조화 법률 요약 텍스트 (SSOT)
  */
-export function getFallbackSummary(query: string, scoredChunks: MinimalScoredChunk[]): string {
+export function getFallbackSummary(query: string, scoredChunks: ScoredArticleChunk[]): string {
   if (scoredChunks.length === 0) {
     return getNoRelevantLawMessage(query);
   }
@@ -222,7 +183,7 @@ export const QUERY_ANALYSIS_SYSTEM_PROMPT = '오직 법률 검색 키워드 또�
 
 /**
  * 사용자 질의가 대한민국 법령과 관련 있는지 판별하고 핵심 검색어를 추출하기 위한 프롬프트 (SSOT)
- * data/prompts/query_analysis.md 파일 기반 핫 리로드
+ * prompts/1100-query_analysis.md 파일 기반 핫 리로드
  */
 export function getQueryAnalysisPrompt(query: string): string {
   const template = loadPromptFile(QUERY_ANALYSIS_PROMPT_PATH);
@@ -238,7 +199,7 @@ export const RERANK_SYSTEM_PROMPT = '오직 후보 번호만 쉼표로 출력하
 
 /**
  * 질의 문맥 적합도 지능형 리랭킹 프롬프트 (SSOT)
- * data/prompts/rerank.md 파일 기반 핫 리로드
+ * prompts/1200-rerank.md 파일 기반 핫 리로드
  */
 export function getRerankPrompt(query: string, candidatesText: string): string {
   const template = loadPromptFile(RERANK_PROMPT_PATH);

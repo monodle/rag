@@ -1,6 +1,11 @@
 import { pipeline, TextStreamer } from '@huggingface/transformers';
-import { ScoredArticleChunk } from '../indexer/qdrantService.js';
-import { USE_ONDEVICE_LLM, ONDEVICE_LLM_MODEL } from '../config/constants.js';
+import type { ScoredArticleChunk } from '../types/law.js';
+import {
+  USE_ONDEVICE_LLM,
+  ONDEVICE_LLM_MODEL,
+  DEFAULT_ONNX_MAX_TOKENS,
+  DEFAULT_ONNX_TEMPERATURE,
+} from '../config/constants.js';
 import {
   getSystemPrompt,
   buildRagUserContent,
@@ -21,6 +26,7 @@ export class LlmService {
   private generatorPromise: Promise<any> | null = null;
   private isInitializing = false;
   private isReady = false;
+  private enabled: boolean = USE_ONDEVICE_LLM;
 
   public readonly modelName: string;
   public readonly dtype: 'q4' | 'q8' | 'fp32' | 'fp16';
@@ -30,8 +36,8 @@ export class LlmService {
   constructor(options: LlmGenerationOptions = {}) {
     this.modelName = options.modelName || ONDEVICE_LLM_MODEL;
     this.dtype = options.dtype || 'q4';
-    this.maxNewTokens = options.maxNewTokens || 1024;
-    this.temperature = options.temperature || 0.0;
+    this.maxNewTokens = options.maxNewTokens ?? DEFAULT_ONNX_MAX_TOKENS;
+    this.temperature = options.temperature ?? DEFAULT_ONNX_TEMPERATURE;
   }
 
   public static getInstance(options?: LlmGenerationOptions): LlmService {
@@ -41,9 +47,13 @@ export class LlmService {
     return LlmService.instance;
   }
 
+  public setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+  }
+
   public getStatus(): { enabled: boolean; isReady: boolean; isInitializing: boolean; modelName: string } {
     return {
-      enabled: USE_ONDEVICE_LLM,
+      enabled: this.enabled,
       isReady: this.isReady,
       isInitializing: this.isInitializing,
       modelName: this.modelName,
@@ -54,7 +64,7 @@ export class LlmService {
    * 앱 구동 시 백그라운드에서 Gemma 4 모델을 즉시 사전 로드(Pre-warm)합니다.
    */
   public warmup(): void {
-    if (!USE_ONDEVICE_LLM) {
+    if (!this.enabled) {
       return;
     }
     if (!this.generatorPromise) {
@@ -69,8 +79,8 @@ export class LlmService {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public async getGenerator(): Promise<any> {
-    if (!USE_ONDEVICE_LLM) {
-      throw new Error('온디바이스 LLM이 설정(.env)에서 비활성화되어 있습니다.');
+    if (!this.enabled) {
+      throw new Error('온디바이스 LLM이 비활성화되어 있습니다.');
     }
     if (this.generatorPromise) {
       return this.generatorPromise;

@@ -23,12 +23,30 @@ export interface LawArticleChunk {
   effectiveDate: string;
   status: string;
   sourceUrl: string;
-  filePath: string;
+  filePath?: string;
 }
 
 export interface ParsedLawDocument {
   metadata: LawFrontmatter;
   chunks: LawArticleChunk[];
+}
+
+/**
+ * 법령 벡터 검색 옵션 인터페이스 (Single Source of Truth)
+ */
+export interface LawSearchOptions {
+  limit?: number;
+  scoreThreshold?: number;
+  lawName?: string;
+  articleNumber?: string;
+}
+
+/**
+ * 유사도 점수가 부여된 법령 조문 청크 (Single Source of Truth)
+ */
+export interface ScoredArticleChunk {
+  score: number;
+  chunk: LawArticleChunk;
 }
 
 /**
@@ -59,9 +77,75 @@ export interface UnifiedLlmStatus {
 }
 
 /**
+ * 로컬에 보관된 사용 가능한 GGUF 모델 정보 DTO (Single Source of Truth)
+ */
+export interface AvailableLlmModel {
+  filename: string;
+  name: string;
+  title: string;
+  quant: string;
+  sizeBytes: number;
+  isCurrent: boolean;
+}
+
+/**
+ * 사전 구축 법령 벡터 DB 다운로드 및 동기화 진행 상태 DTO (Single Source of Truth)
+ */
+export interface DbSyncProgress {
+  status: 'checking' | 'downloading' | 'extracting' | 'verifying' | 'completed' | 'error';
+  percent: number;
+  downloadedMB: string;
+  totalMB: string;
+  message: string;
+}
+
+/**
+ * HuggingFace GGUF 파일 정보 DTO (Single Source of Truth)
+ */
+export interface HfGgufItem {
+  path: string;
+  size: number;
+  sizeFormatted: string;
+}
+
+/**
+ * 온디바이스 GGUF 모델 다운로드 진행 상태 DTO (Single Source of Truth)
+ */
+export interface ModelDownloadProgress {
+  status: 'idle' | 'downloading' | 'completed' | 'error';
+  repo: string;
+  filename: string;
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  downloadedMB: string;
+  totalMB: string;
+  speedMBs: string;
+  message: string;
+}
+
+/**
+ * 시스템 스토리지 디렉토리별 점유량 DTO (Single Source of Truth)
+ */
+export interface StorageBreakdown {
+  totalBytes: number;
+  modelsBytes: number;
+  databaseBytes: number;
+  engineBytes: number;
+  logsBytes: number;
+  formattedTotal: string;
+  formattedModels: string;
+  formattedDatabase: string;
+  formattedEngine: string;
+  formattedLogs: string;
+  appDataRoot: string;
+}
+
+/**
  * 백엔드 RAG 통계 API (/api/stats) 응답 DTO (Single Source of Truth)
  */
 export interface ServerStatsResponse {
+  version?: string;
   collection: string;
   lawsCount: number;
   pointsCount: number;
@@ -70,6 +154,8 @@ export interface ServerStatsResponse {
   llm: UnifiedLlmStatus;
   engine: string;
   gpu: string;
+  vectorBackend?: string;
+  minReferenceScoreThreshold?: number;
 }
 
 /**
@@ -90,25 +176,52 @@ export interface ProcessLogItem {
   timestamp: string;
   status: 'loading' | 'done';
 }
+/**
+ * 온디바이스 GGUF 추천 모델 프리셋 인터페이스 (Single Source of Truth)
+ */
+export interface PresetModel {
+  repo: string;
+  name: string;
+  defaultFile: string;
+  sizeLabel: string;
+  description: string;
+  tags: string[];
+}
 
 /**
- * UI에 노출되는 근거 법조문의 최소 코사인 유사도 점수 임계치 (74% 이상만 노출, Single Source of Truth)
+ * 로컬 설치 여부가 결합된 프리셋 모델 DTO (Single Source of Truth)
  */
-export const MIN_REFERENCE_SCORE_THRESHOLD = 0.74;
+export type PresetModelWithStatus = PresetModel & {
+  isInstalled: boolean;
+  installedFilename?: string;
+};
+
 
 /**
- * UI 참조 조문 카드에서 기본으로 펼쳐 보여줄 조문 수 (Single Source of Truth)
+ * 백엔드 데이터베이스 상태 API (/api/db/status) 응답 DTO (Single Source of Truth)
  */
-export const DEFAULT_UI_VISIBLE_REFS = 5;
+export interface DbStatusResponse {
+  ready: boolean;
+  pointsCount: number;
+  progress: DbSyncProgress;
+}
 
 /**
- * 마크다운 이스케이프 문자(예: 1\. -> 1., \( -> ()를 사람이 읽기 좋은 일반 문장 형식으로 정제합니다 (SSOT).
+ * 백엔드 LLM 모델 목록 API (/api/llm/models) 응답 DTO (Single Source of Truth)
  */
-export function cleanMarkdownEscapes(text?: string): string {
+export interface LlmModelsResponse {
+  models: AvailableLlmModel[];
+  currentModel: string | null;
+}
 
-  if (!text || typeof text !== 'string') return '';
-  return text
-    .replace(/(\d+)\\\./g, '$1.')
-    .replace(/\\([()[\]\-*+~])/g, '$1');
+/**
+ * 사용자 질의 분석 및 키워드 추출 결과 DTO (Single Source of Truth)
+ */
+export interface QueryAnalysisResult {
+  keywords: string[];
+  isLegalQuery: boolean;
+  rawResponse?: string;
+  systemPrompt?: string;
+  prompt?: string;
 }
 

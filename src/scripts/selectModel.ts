@@ -4,17 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { MODELS_DIR } from '../config/constants.js';
-
-/**
- * 바이트 단위를 읽기 좋은 문자열(MB, GB 등)로 포맷팅합니다.
- */
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
+import { formatBytes } from '../utils/formatUtils.js';
 
 /**
  * .env 파일의 온디바이스 LLM 설정을 안전하게 갱신합니다.
@@ -71,47 +61,50 @@ async function getCurrentActiveModel(): Promise<{ enabled: boolean; modelPath: s
 }
 
 async function main() {
+  const modelsDir = MODELS_DIR;
+  const displayModelsDir = path.relative(process.cwd(), modelsDir) || modelsDir;
   console.log('\n================================================================');
-    console.log('🤖 [로컬 온디바이스 모델 선택기] - ./data/models');
-    console.log('================================================================');
+  console.log(`🤖 [로컬 온디바이스 모델 선택기] - ${displayModelsDir}`);
+  console.log('================================================================');
 
-    const modelsDir = MODELS_DIR;
-    if (!fsSync.existsSync(modelsDir)) {
-      await fs.mkdir(modelsDir, { recursive: true });
+  if (!fsSync.existsSync(modelsDir)) {
+    await fs.mkdir(modelsDir, { recursive: true });
+  }
+
+  const files = await fs.readdir(modelsDir, { withFileTypes: true });
+  const ggufFiles: { name: string; size: number; fullPath: string; relPath: string }[] = [];
+
+  for (const file of files) {
+    if (file.isFile() && file.name.endsWith('.gguf')) {
+      const fullPath = path.join(modelsDir, file.name);
+      const stat = await fs.stat(fullPath);
+      const rawRel = path.relative(process.cwd(), fullPath);
+      const relPath = rawRel.startsWith('.') ? rawRel : `./${rawRel}`;
+      ggufFiles.push({
+        name: file.name,
+        size: stat.size,
+        fullPath,
+        relPath,
+      });
     }
+  }
 
-    const files = await fs.readdir(modelsDir, { withFileTypes: true });
-    const ggufFiles: { name: string; size: number; fullPath: string; relPath: string }[] = [];
+  // 이름순 정렬
+  ggufFiles.sort((a, b) => a.name.localeCompare(b.name));
 
-    for (const file of files) {
-      if (file.isFile() && file.name.endsWith('.gguf')) {
-        const fullPath = path.join(modelsDir, file.name);
-        const stat = await fs.stat(fullPath);
-        ggufFiles.push({
-          name: file.name,
-          size: stat.size,
-          fullPath,
-          relPath: `./data/models/${file.name}`,
-        });
-      }
-    }
+  const current = await getCurrentActiveModel();
 
-    // 이름순 정렬
-    ggufFiles.sort((a, b) => a.name.localeCompare(b.name));
+  console.log(`현재 상태: ${current.enabled ? '🟢 활성화 (ON)' : '⚪ 비활성화 (OFF)'}`);
+  if (current.enabled && current.modelPath) {
+    console.log(`현재 선택된 모델: ${current.modelPath}`);
+  }
+  console.log('----------------------------------------------------------------');
 
-    const current = await getCurrentActiveModel();
+  console.log('[0] ⛔ 온디바이스 LLM 비활성화 (USE_ONDEVICE_LLM=false)');
 
-    console.log(`현재 상태: ${current.enabled ? '🟢 활성화 (ON)' : '⚪ 비활성화 (OFF)'}`);
-    if (current.enabled && current.modelPath) {
-      console.log(`현재 선택된 모델: ${current.modelPath}`);
-    }
-    console.log('----------------------------------------------------------------');
-
-    console.log('[0] ⛔ 온디바이스 LLM 비활성화 (USE_ONDEVICE_LLM=false)');
-
-    if (ggufFiles.length === 0) {
-      console.log('\n⚠️ ./data/models 폴더에 다운로드된 .gguf 모델 파일이 없습니다.');
-      console.log('   먼저 `pnpm model:download` 명령어로 모델을 다운로드하세요.\n');
+  if (ggufFiles.length === 0) {
+    console.log(`\n⚠️ ${displayModelsDir} 폴더에 다운로드된 .gguf 모델 파일이 없습니다.`);
+    console.log('   먼저 `pnpm model:download` 명령어로 모델을 다운로드하세요.\n');
     } else {
       ggufFiles.forEach((m, idx) => {
         const isCurrent = current.enabled && (current.modelPath === m.relPath || current.modelPath.endsWith(m.name));
@@ -158,7 +151,7 @@ async function main() {
     console.log('\n✅ 모델이 성공적으로 .env에 적용되었습니다!');
     console.log(`   USE_ONDEVICE_LLM=true`);
     console.log(`   ONDEVICE_LLM="${selected.relPath}"`);
-    console.log('   (RAG 백엔드 서버를 재시작하시면 Metal GPU로 즉시 적재됩니다.)\n');
+    console.log('   (RAG 백엔드 서버를 재시작하시면 하드웨어 가속 엔진(Metal/CUDA/Vulkan/CPU)으로 즉시 적재됩니다.)\n');
 }
 
 if (process.argv[1]?.endsWith('selectModel.ts') || process.argv[1]?.endsWith('selectModel.js')) {

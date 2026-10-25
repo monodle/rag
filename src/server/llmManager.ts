@@ -1,32 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ScoredArticleChunk } from '../indexer/qdrantService.js';
-import { LlamaCppService, type QueryAnalysisResult } from './llamaCppService.js';
+import { LlamaCppService } from './llamaCppService.js';
 import { LlmService } from './llmService.js';
-import { MODELS_DIR } from '../config/constants.js';
+import { MODELS_DIR, PRESET_MODELS } from '../config/constants.js';
 import { getNoRelevantLawMessage, getFallbackSummary } from './promptManager.js';
-import { formatModelDisplayName } from '../types/lawRegex.js';
+import { formatModelDisplayName } from '../utils/formatUtils.js';
+import { DEFAULT_LAW_AGGREGATION_CONFIG } from './lawAggregator.js';
 import { QueryLogSession } from './queryLogger.js';
-
-export type { QueryAnalysisResult };
-
-export interface UnifiedLlmStatus {
-  enabled: boolean;
-  isReady: boolean;
-  isInitializing: boolean;
-  modelName: string;
-  gpu: string;
-  engine: 'disabled' | 'metal-gpu' | 'onnx-cpu';
-}
-
-export interface AvailableLlmModel {
-  filename: string;
-  name: string;
-  title: string;
-  quant: string;
-  sizeBytes: number;
-  isCurrent: boolean;
-}
+import type {
+  UnifiedLlmStatus,
+  AvailableLlmModel,
+  ScoredArticleChunk,
+  PresetModel,
+  PresetModelWithStatus,
+  QueryAnalysisResult,
+} from '../types/law.js';
 
 /**
  * 온디바이스 언어 모델 추론을 총괄하는 통합 오케스트레이터 Facade (Single Source of Truth)
@@ -88,7 +76,7 @@ export class LlmManager {
     try {
       const entries = await fs.promises.readdir(MODELS_DIR, { withFileTypes: true });
       const ggufFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.gguf'));
-      const currentModelName = path.basename(this.llamaCppService.modelPath || '');
+      const currentModelName = path.basename(this.llamaCppService.getModelPath() || '');
 
       const models: AvailableLlmModel[] = [];
       for (const file of ggufFiles) {
@@ -118,6 +106,7 @@ export class LlmManager {
    */
   public async setEnabled(enabled: boolean): Promise<UnifiedLlmStatus> {
     await this.llamaCppService.setEnabled(enabled);
+    this.llmService.setEnabled(enabled);
     return this.getStatus();
   }
 
@@ -134,6 +123,81 @@ export class LlmManager {
 
     await this.llamaCppService.switchModel(fullPath);
     return this.getStatus();
+  }
+
+  /**
+   * 추천 프리셋 목록과 현재 로컬에 설치되어 있는지 여부를 조회합니다.
+   */
+  public async getPresetsWithStatus(): Promise<PresetModelWithStatus[]> {
+    const available = await this.getAvailableModels();
+    const installedFiles = new Set(available.map((m) => m.filename.toLowerCase()));
+
+    return PRESET_MODELS.map((preset) => {
+      const isInstalled = installedFiles.has(preset.defaultFile.toLowerCase());
+      return {
+        ...preset,
+        isInstalled,
+        installedFilename: isInstalled ? preset.defaultFile : undefined,
+      };
+    });
+  }
+
+  /**
+   * 로컬 온디바이스 모델을 메모리에서 안전하게 언로드합니다.
+   */
+  public async unloadModel(): Promise<void> {
+    await this.llamaCppService.unloadModel();
+  }
+
+  /**
+   * 지정된 모델 파일을 안전하게 삭제합니다.
+   * 현재 사용 중인 모델인 경우 메모리를 안전하게 해제한 후 삭제합니다.
+   */
+  public async deleteModel(filename: string): Promise<{
+    success: boolean;
+    remainingModels: AvailableLlmModel[];
+    currentModel: string;
+  }> {
+    const safeFilename = path.basename(filename);
+    const fullPath = path.join(MODELS_DIR, safeFilename);
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`삭제할 모델 파일이 존재하지 않습니다: ${safeFilename}`);
+    }
+
+    const currentModelName = path.basename(this.llamaCppService.getModelPath() || '');
+    const isCurrentModel = safeFilename === currentModelName;
+
+    if (isCurrentModel) {
+      console.log(`🧹 [LlmManager] 활성 모델 삭제를 위해 메모리 해제 시작: ${safeFilename}`);
+      await this.llamaCppService.clearModel();
+    }
+
+    await fs.promises.unlink(fullPath);
+    console.log(`🗑️ [LlmManager] 모델 파일 삭제 완료: ${safeFilename}`);
+
+    const remaining = await this.getAvailableModels();
+    let newCurrentModel = '';
+
+    if (isCurrentModel) {
+      if (remaining.length > 0) {
+        const nextModel = remaining[0].filename;
+        console.log(`🔄 [LlmManager] 삭제 후 대체 모델로 자동 전환: ${nextModel}`);
+        await this.switchModel(nextModel);
+        newCurrentModel = nextModel;
+      } else {
+        console.log('ℹ️ [LlmManager] 잔여 모델이 없어 온디바이스 LLM을 비활성화합니다.');
+        await this.setEnabled(false);
+      }
+    } else {
+      newCurrentModel = currentModelName;
+    }
+
+    return {
+      success: true,
+      remainingModels: remaining,
+      currentModel: newCurrentModel,
+    };
   }
 
   /**
@@ -192,7 +256,7 @@ export class LlmManager {
     const llamaStatus = this.llamaCppService.getStatus();
 
     // 1. Metal GPU (LlamaCpp) 우선 시도
-    if (llamaStatus.isReady || this.llamaCppService.modelPath) {
+    if (llamaStatus.isReady || this.llamaCppService.getModelPath()) {
       try {
         return await this.llamaCppService.generateAnswer(query, scoredChunks, onToken, onStatus, logSession);
       } catch (gpuError) {
@@ -224,7 +288,7 @@ export class LlmManager {
 
     // 1. 모델이 아직 준비되지 않았다면 자동 초기화 시도
     if (!this.llamaCppService.isReady) {
-      if (this.llamaCppService.modelPath) {
+      if (this.llamaCppService.getModelPath()) {
         try {
           await this.llamaCppService.initModel();
         } catch {
@@ -243,14 +307,6 @@ export class LlmManager {
     }
   }
 
-  /**
-   * 온디바이스 모델을 통해 검색용 핵심 법률 키워드를 초고속 추출합니다 (하위 호환 지원).
-   * 모델 미탑재/비활성화 시 빈 배열을 즉시 반환하여 원본 질의로 안전하게 폴백합니다 (SSOT).
-   */
-  public async extractSearchKeywords(query: string): Promise<string[]> {
-    const result = await this.analyzeQuery(query);
-    return result.isLegalQuery ? result.keywords : [];
-  }
 
   /**
    * 온디바이스 모델을 통해 Qdrant 검색 후보 조문의 질의 문맥 적합도를 지능형 리랭킹합니다 (SSOT).
@@ -259,7 +315,7 @@ export class LlmManager {
   public async rerankArticlesByRelevance(
     query: string,
     candidateChunks: ScoredArticleChunk[],
-    topK: number = 5,
+    topK: number = DEFAULT_LAW_AGGREGATION_CONFIG.targetCandidateCount,
     logSession?: QueryLogSession
   ): Promise<ScoredArticleChunk[]> {
     const status = this.getStatus();
@@ -268,7 +324,7 @@ export class LlmManager {
     }
 
     if (!this.llamaCppService.isReady) {
-      if (this.llamaCppService.modelPath) {
+      if (this.llamaCppService.getModelPath()) {
         try {
           await this.llamaCppService.initModel();
         } catch {

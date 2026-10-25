@@ -107,7 +107,7 @@ export class EmbeddingService {
    */
   public async embedBatch(
     texts: string[],
-    batchSize: number = this.defaultBatchSize,
+    _batchSize: number = this.defaultBatchSize,
     onProgress?: (processed: number, total: number) => void
   ): Promise<number[][]> {
     if (!texts || texts.length === 0) {

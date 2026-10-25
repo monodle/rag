@@ -1,8 +1,10 @@
 import matter from 'gray-matter';
-import { LawFrontmatter, LawArticleChunk, ParsedLawDocument, cleanMarkdownEscapes } from '../types/law.js';
+import { LawFrontmatter, LawArticleChunk, ParsedLawDocument } from '../types/law.js';
+import { cleanMarkdownEscapes } from '../utils/formatUtils.js';
+import { ARTICLE_HEADER_MARKDOWN_REGEX } from '../types/lawRegex.js';
 
 export class MarkdownLawParser {
-  private static readonly ARTICLE_HEADER_REGEX = /^#####\s+(제\d+조(?:의\d+)?)(?:\s*\(([^)]+)\))?/;
+  private static readonly ARTICLE_HEADER_REGEX = ARTICLE_HEADER_MARKDOWN_REGEX;
   private static readonly CHAPTER_HEADER_REGEX = /^##\s+(제\d+[편장관](?:\s+[^\n]+)?)/;
   private static readonly SECTION_HEADER_REGEX = /^###\s+(제\d+절(?:\s+[^\n]+)?)/;
   private static readonly ADDENDUM_HEADER_REGEX = /^##\s+(부칙.*)/;
