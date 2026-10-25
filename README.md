@@ -118,47 +118,71 @@
 
 ```mermaid
 flowchart TD
-    User(["👤 사용자 질문 입력"]) --> Step1["1️⃣ 질의 분석 및 가드레일<br/>(1100-query_analysis.md)"]
+    %% Global Theme & Styles
+    classDef startEnd fill:#0F172A,stroke:#1E293B,stroke-width:2px,color:#FFFFFF,font-weight:bold;
+    classDef proc fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#1E293B;
+    classDef decision fill:#FFFBEB,stroke:#F59E0B,stroke-width:2px,color:#92400E,font-weight:bold;
+    classDef db fill:#F0FDF4,stroke:#10B981,stroke-width:2px,color:#065F46,font-weight:bold;
+    classDef exit fill:#FEF2F2,stroke:#EF4444,stroke-width:1.5px,color:#991B1B;
+    classDef output fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#312E81,font-weight:bold;
 
-    subgraph Guardrail ["가드레일 & 사전 판별"]
-        Step1 --> CheckLegal{"대한민국 법률<br/>관련 질의인가?"}
-        CheckLegal -- "❌ 아니오" --> NonLegal["⚠️ 비법률 안내 및 예시 질의 즉시 반환 (Early Return)"]
-        CheckLegal -- "✅ 예" --> KeywordExt["💡 핵심 법률 용어/키워드 추출<br/>& 검색 질의어 확장 결합"]
+    User(["👤 사용자 질문 입력"]):::startEnd
+
+    subgraph Step1 ["1️⃣ 질의 분석 및 사전 가드레일 (1100-query_analysis.md)"]
+        direction TB
+        CheckLegal{"대한민국 법령<br/>관련 질의인가?"}:::decision
+        NonLegal["⚠️ 비법률 안내 및 예시 질의 즉시 반환<br/><small>(Early Return으로 리소스 낭비 원천 차단)</small>"]:::exit
+        KeywordExt["💡 핵심 법률 용어/키워드 추출<br/>& 검색 쿼리 지능형 확장"]:::proc
+        
+        CheckLegal -- "❌ 무관 질의" --> NonLegal
+        CheckLegal -- "✅ 법률 질의" --> KeywordExt
     end
 
-    KeywordExt --> Step2["2️⃣ 질문 쿼리 고밀도 임베딩<br/>(google/embeddinggemma-2 ONNX)"]
-
-    subgraph VectorSearch ["사전 구축 벡터 DB 유사도 검색"]
-        Step2 --> DB[("내장 LanceDB / Qdrant<br/>(사전 임베딩된 20만 조문)")]
-        DB --> Candidates["후보군 수백~수천 개 추출"]
-        Candidates --> Filter["🧹 현행법 필터링 & 폐지/삭제 조문 배제<br/>(최소 유사도 0.65, 상대 감쇄 88%)"]
+    subgraph Step2 ["2️⃣ 고밀도 벡터 임베딩 & 유사도 검색 (EmbeddingService / LanceDB)"]
+        direction TB
+        Embed["📐 768차원 쿼리 임베딩 변환<br/><small>(google/embeddinggemma-2 ONNX)</small>"]:::proc
+        DB[("내장 LanceDB / Qdrant<br/><small>(사전 임베딩된 20만 법률 조문)</small>")]:::db
+        Filter["🧹 현행법 유효 조문 필터링 & 폐지·삭제 조문 배제<br/><small>(최소 유사도 0.65 이상 & 최상위 대비 상대 감쇄 88%)</small>"]:::proc
+        
+        Embed --> DB --> Filter
     end
 
-    Filter --> Step3["3️⃣ 지능형 조문 리랭킹<br/>(1200-rerank.md)"]
-
-    subgraph Reranking ["문맥 적합도 재평가"]
-        Step3 --> RerankLLM["온디바이스 LLM을 통해<br/>질문 상황과 조문 간 실제 인과관계 검토"]
-        RerankLLM --> Prioritized["핵심 해결 조문 1순위 지능형 승격"]
+    subgraph Step3 ["3️⃣ 질문 문맥 적합도 지능형 리랭킹 (1200-rerank.md)"]
+        direction TB
+        RerankLLM["🧠 온디바이스 LLM 심층 문맥 평가<br/><small>(구체적 사실관계와 조문 간 실질적 인과관계 검토)</small>"]:::proc
+        Prioritized["🎯 분쟁 해결 핵심 특화 조문 1순위 승격"]:::proc
+        
+        RerankLLM --> Prioritized
     end
 
-    Prioritized --> Step4["4️⃣ 온디바이스 LLM 답변 생성<br/>(1000-system_prompt / 1300-main_answer)"]
-
-    subgraph Generation ["생성 & 자가 치유 파이프라인"]
-        Step4 --> Gen3Step["3단계 구조 답변 생성<br/>(1. 핵심 요약 ➔ 2. 법적 기준 ➔ 3. 유의사항)"]
-        Gen3Step --> CheckBody{"본론/결론<br/>누락 여부 검사"}
-        CheckBody -- "누락 감지" --> SelfHeal["🔁 동일 세션 순차 자가 치유<br/>(1500-step_body / 1600-step_conclusion)"]
-        CheckBody -- "완전한 생성" --> StreamTokens["⚡ 실시간 SSE 스트리밍 토큰 전송"]
-        SelfHeal --> StreamTokens
+    subgraph Step4 ["4️⃣ 온디바이스 LLM 답변 생성 & 자가 치유 (LlamaCppService)"]
+        direction TB
+        GenAnswer["📝 3단계 구조 답변 생성<br/><small>(1. 핵심 요약 ➔ 2. 법적 판단 기준 ➔ 3. 실무 유의사항)</small>"]:::proc
+        CheckMissing{"본론/결론<br/>누락 검사"}:::decision
+        SelfHeal["🔁 동일 세션 순차 자가 치유<br/><small>(1500-step_body / 1600-step_conclusion)</small>"]:::proc
+        StreamSSE["⚡ 실시간 SSE 스트리밍 토큰 전송"]:::proc
+        
+        GenAnswer --> CheckMissing
+        CheckMissing -- "누락 감지" --> SelfHeal --> StreamSSE
+        CheckMissing -- "정상 생성" --> StreamSSE
     end
 
-    StreamTokens --> Step5["5️⃣ 근거 조문 확정 & 후속 질문 도출<br/>(refineReferences & 1700-drilldown)"]
-
-    subgraph Finalize ["최종 확정 및 후속 탐색"]
-        Step5 --> RefineRefs["답변 본문 내 실제 명시 인용 조문 교차 검증<br/>➔ UI 근거 법조문 카드 확정"]
-        Step5 --> DrillDown["심화 탐색을 위한 후속 질문 3가지 제안"]
+    subgraph Step5 ["5️⃣ 근거 조문 확정 & 후속 질문 도출 (refineReferences & 1700-drilldown)"]
+        direction TB
+        RefineRefs["📑 생성 본문 내 실제 명시 인용 조문 교차 검증<br/>➔ UI 접이식 근거 법조문 카드 확정"]:::proc
+        DrillDown["🔍 추가 쟁점 탐색을 위한 후속 질문 3가지 제안"]:::proc
     end
 
-    RefineRefs --> Output(["💻 최종 답변 + 근거 법조문 카드 + 후속 추천 질문 출력"])
+    Output(["💻 최종 응답 완성<br/>(답변 스트림 + 근거 법조문 카드 + 후속 추천 질문)"]):::output
+
+    %% 메인 파이프라인 수직 연결
+    User --> CheckLegal
+    KeywordExt --> Embed
+    Filter --> RerankLLM
+    Prioritized --> GenAnswer
+    StreamSSE --> RefineRefs
+    StreamSSE --> DrillDown
+    RefineRefs --> Output
     DrillDown --> Output
 ```
 
