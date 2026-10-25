@@ -354,22 +354,21 @@ scripts\build-win.bat
 pnpm build:release
 ```
 
-### 2. 백엔드 엔진 아카이브 패키징
-Tauri 사이드카 번들링을 위해 백엔드 바이너리와 네이티브 모듈을 독립 아카이브로 압축합니다:
+### 2. 백엔드 엔진 런타임 패키징
+Tauri 스마트 웹 인스톨러가 최초 실행 시 다운로드하여 구동할 온디바이스 백엔드 엔진 런타임(Node 바이너리 + 네이티브 모듈)을 독립 아카이브로 패키징합니다:
 ```bash
+# 로컬 백엔드 엔진 아카이브 패키징 (release/ 폴더에 생성)
 pnpm engine:pack
 ```
 
-### 3. GitHub Releases 자동 배포
-빌드된 인스톨러(`DMG`, `NSIS exe`) 및 벡터 데이터베이스 에셋을 GitHub Releases에 배포합니다:
-```bash
-# 인스톨러 배포
-pnpm release:app
+### 3. GitHub Releases 자동 배포 (3대 독립 채널)
+빌드 및 패키징된 에셋들을 목적과 다운로드 주체에 맞는 독립 릴리즈 채널로 배포합니다:
 
-# 사전 구축된 LanceDB 벡터 DB 아카이브 배포
-pnpm db:pack
-pnpm db:release
-```
+| 구분 | 릴리즈 채널 링크 | 주요 배포 에셋 | 배포 명령어 |
+| :--- | :--- | :--- | :--- |
+| **📦 설치 파일** | [**`latest`**](https://github.com/monodle/rag/releases/tag/latest) | `Korean-Law-RAG-latest.dmg`<br>`Korean-Law-RAG-latest-setup.exe` | `pnpm release:app` |
+| **⚙️ 엔진 런타임** | [**`v1.0.0`**](https://github.com/monodle/rag/releases/tag/v1.0.0) | `korean_law_engine_mac_arm64.tar.gz`<br>`korean_law_engine_win_x64.tar.gz` | `pnpm engine:release` |
+| **🗄️ 벡터 DB** | [**`data-v1`**](https://github.com/monodle/rag/releases/tag/data-v1) | `lancedb_korean_laws_200k.tar.gz` | `pnpm db:release` |
 
 ---
 
@@ -382,21 +381,26 @@ pnpm db:release
 |                      | `pnpm dev`             | 브라우저 개발 모드 (백엔드 `34200` + Vite UI `5173` 동시 구동)           |
 |                      | `pnpm dev:server`      | RAG HTTP 백엔드 서버 단독 실행 (SSE 스트리밍, Hot-reload)                |
 |                      | `pnpm dev:ui`          | Vite 웹 프론트엔드 단독 구동 (`http://localhost:5173`)                   |
+| **빌드 & 번들링**    | `pnpm build:ui`        | Vite 웹 프론트엔드 프로덕션 번들 빌드 (`dist-web/`)                       |
+|                      | `pnpm build:server`    | esbuild 백엔드 독립 실행형 서버 번들링 (`dist-server/`)                   |
+|                      | `pnpm sync:version`    | `package.json`, `tauri.conf.json`, `Cargo.toml` 버전 동기화               |
+|                      | `pnpm build:mac`       | macOS DMG 및 앱 번들 릴리즈 빌드                                         |
+|                      | `pnpm build:win`       | Windows NSIS x64 설치 파일 릴리즈 빌드                                   |
+|                      | `pnpm build:release`   | 현재 OS에 맞는 데스크톱 인스톨러 빌드                                    |
+|                      | `pnpm engine:pack`     | 독립 실행형 백엔드 엔진 런타임 아카이브 패키징                           |
 | **데이터 & 벡터 DB** | `pnpm db:download`     | GitHub Releases에서 사전 구축된 20만 조문 LanceDB 다운로드               |
 |                      | `pnpm db:migrate`      | Docker Qdrant의 기구축 벡터 데이터를 내장 LanceDB로 무재인덱싱 고속 복제 |
 |                      | `pnpm db:pack`         | 로컬 LanceDB 데이터를 배포용 `korean_laws_lancedb.tar.gz`로 패키징       |
-|                      | `pnpm db:release`      | GitHub Releases에 LanceDB 아카이브 에셋 배포                             |
+|                      | `pnpm db:release`      | GitHub Releases(`data-v1`)에 LanceDB 아카이브 에셋 배포                  |
 |                      | `pnpm index:laws`      | 법령 마크다운 파싱 및 로컬 벡터 DB 인덱싱 (옵션: `--target`, `--limit`)  |
 |                      | `pnpm parse:test`      | 법령 마크다운 조문 파서 정상 파싱 단위 검증                              |
 | **모델 관리**        | `pnpm model:download`  | Hugging Face 최신 한국어 GGUF 온디바이스 모델 대화형 다운로더            |
 |                      | `pnpm model:select`    | `data/models/` 내에 다운로드된 GGUF 모델 교체 및 `.env` 반영             |
 | **CLI 검색/채팅**    | `pnpm search "<질문>"` | UI 없이 터미널에서 즉시 유사 법조문 코사인 검색 테스트                   |
 |                      | `pnpm chat`            | 터미널 대화형 RAG 챗봇 세션 실행                                         |
-| **빌드 & 패키징**    | `pnpm build:mac`       | macOS DMG 및 앱 번들 릴리즈 빌드                                         |
-|                      | `pnpm build:win`       | Windows NSIS x64 설치 파일 릴리즈 빌드                                   |
-|                      | `pnpm build:release`   | 현재 OS에 맞는 데스크톱 인스톨러 빌드                                    |
-|                      | `pnpm engine:pack`     | 네이티브 모듈 포함 Standalone Engine 번들링                              |
-|                      | `pnpm release:app`     | 빌드된 데스크톱 인스톨러 GitHub Releases 배포                            |
+| **GitHub 배포**      | `pnpm release:app`     | GitHub Releases(`latest`)에 데스크톱 인스톨러 배포                       |
+|                      | `pnpm engine:release`  | GitHub Releases(`v1.0.0`)에 백엔드 엔진 런타임 에셋 배포                 |
+|                      | `pnpm db:release`      | GitHub Releases(`data-v1`)에 LanceDB 벡터 데이터베이스 에셋 배포         |
 
 ---
 

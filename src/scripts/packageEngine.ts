@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { ENGINE_ARCHIVE_NAMES, APP_VERSION, APP_CONFIG } from '../config/constants.js';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  ENGINE_ARCHIVE_NAMES,
+  APP_VERSION,
+} from '../config/constants.js';
 import { calculateSha256 } from '../utils/fileUtils.js';
 
 type TargetPlatform = 'mac' | 'win';
@@ -24,6 +27,24 @@ const PLATFORM_CONFIGS: Record<TargetPlatform, EngineConfig> = {
     nodeBinaryName: 'node.exe',
   },
 };
+
+/**
+ * 디렉터리를 방어적으로 강제 삭제합니다 (macOS .DS_Store 지연 생성 등 ENOTEMPTY 방지).
+ */
+function cleanDirSync(dirPath: string): void {
+  if (!fs.existsSync(dirPath)) {
+    return;
+  }
+  try {
+    fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    if (process.platform === 'win32') {
+      spawnSync('cmd.exe', ['/c', 'rmdir', '/s', '/q', dirPath]);
+    } else {
+      spawnSync('rm', ['-rf', dirPath]);
+    }
+  }
+}
 
 /**
  * 쉘 명령 비동기 실행 및 실시간 출력
@@ -50,7 +71,6 @@ function executeCommand(command: string, args: readonly string[], cwd = process.
     });
   });
 }
-
 
 /**
  * 디렉터리 재귀 복사
@@ -85,8 +105,7 @@ function resolveSystemNodeBinary(): string {
 /**
  * 백엔드 엔진 독립 패키징
  */
-async function main(): Promise<void> {
-  const isUpload = process.argv.includes('--upload');
+export async function packageEngine(): Promise<{ archivePath: string; checksumPath: string; sha256: string }> {
   const platform: TargetPlatform = process.platform === 'win32' ? 'win' : 'mac';
   const config = PLATFORM_CONFIGS[platform];
 
@@ -98,13 +117,10 @@ async function main(): Promise<void> {
   console.log('='.repeat(65));
   console.log(`📦 [스마트 웹 인스톨러] 백엔드 엔진 패키징 (${platform.toUpperCase()})`);
   console.log(`- 결과 압축 파일: ${targetArchive}`);
-  console.log(`- GitHub Release 자동 업로드: ${isUpload ? '예' : '아니오'}`);
   console.log('='.repeat(65));
 
   // 1. 디렉토리 정리 및 준비
-  if (fs.existsSync(stagingDir)) {
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-  }
+  cleanDirSync(stagingDir);
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.mkdirSync(releaseDir, { recursive: true });
 
@@ -182,9 +198,17 @@ async function main(): Promise<void> {
     }
   }
 
-  // 불필요한 onnxruntime-web 및 @typescript 컴파일러 제거
-  fs.rmSync(path.join(stagingDir, 'node_modules/onnxruntime-web'), { recursive: true, force: true });
-  fs.rmSync(path.join(stagingDir, 'node_modules/@typescript'), { recursive: true, force: true });
+  const nodeLlamaBinDir = path.join(stagingDir, 'node_modules/node-llama-cpp/bins');
+  if (fs.existsSync(nodeLlamaBinDir)) {
+    const bins = fs.readdirSync(nodeLlamaBinDir);
+    for (const b of bins) {
+      if (platform === 'mac' && !b.startsWith('mac-')) {
+        fs.rmSync(path.join(nodeLlamaBinDir, b), { recursive: true, force: true });
+      } else if (platform === 'win' && !b.startsWith('win-')) {
+        fs.rmSync(path.join(nodeLlamaBinDir, b), { recursive: true, force: true });
+      }
+    }
+  }
 
   // 9. 압축 아카이브 생성
   console.log(`\n🗜️ 엔진 압축 중 (${config.archiveName})...`);
@@ -208,39 +232,20 @@ async function main(): Promise<void> {
   console.log(`- SHA256: ${checksum}`);
   console.log('='.repeat(65));
 
-  // 11. GitHub Release 업로드 (옵션)
-  if (isUpload) {
-    const releaseTag = `v${APP_VERSION}`;
-    console.log(`\n🚀 GitHub Release (${releaseTag})로 엔진 파일 업로드 중...`);
-    // 릴리즈 존재 여부 확인 후 create 또는 upload
-    try {
-      await executeCommand('gh', [
-        'release',
-        'upload',
-        releaseTag,
-        targetArchive,
-        targetChecksum,
-        '--clobber',
-      ]);
-    } catch {
-      console.log(`릴리즈 ${releaseTag}가 존재하지 않아 새로 생성합니다...`);
-      await executeCommand('gh', [
-        'release',
-        'create',
-        releaseTag,
-        targetArchive,
-        targetChecksum,
-        '--title',
-        `Korean Law RAG Engine ${releaseTag}`,
-        '--notes',
-        '초경량 스마트 웹 인스톨러 구동용 백엔드 엔진 런타임',
-      ]);
-    }
-    console.log(`🎉 GitHub Release 업로드 완료: https://github.com/${APP_CONFIG.githubRepo}/releases/tag/${releaseTag}`);
-  }
+  // 11. 임시 스테이징 디렉토리 정리
+  cleanDirSync(stagingDir);
+
+  return {
+    archivePath: targetArchive,
+    checksumPath: targetChecksum,
+    sha256: checksum,
+  };
 }
 
-main().catch((err: unknown) => {
-  console.error('\n❌ 엔진 패키징 실패:', err instanceof Error ? err.message : String(err));
-  process.exit(1);
-});
+// 직접 CLI 실행 시
+if (process.argv[1] && process.argv[1].endsWith('packageEngine.ts')) {
+  packageEngine().catch((err: unknown) => {
+    console.error('\n❌ 엔진 패키징 실패:', err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}

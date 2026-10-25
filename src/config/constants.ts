@@ -280,10 +280,21 @@ export const LANCEDB_DIR: string = resolvePathEnv(
 export const LANCEDB_TABLE_NAME: string = process.env.LANCEDB_TABLE_NAME?.trim() || 'korean_laws';
 
 /**
- * 사전 구축된 LanceDB 벡터 데이터베이스 아카이브 파일명 및 기본 릴리즈 태그 (Single Source of Truth)
+ * 사전 구축된 LanceDB 벡터 데이터베이스 아카이브 파일명 (Single Source of Truth)
  */
 export const LANCEDB_ARCHIVE_FILE_NAME = 'korean_laws_lancedb.tar.gz';
-export const DEFAULT_LANCEDB_RELEASE_TAG = 'data-v1';
+
+/**
+ * 3대 독립 릴리즈 채널 기본 태그 설정 (Single Source of Truth, .env에서 재정의 가능)
+ */
+export const DEFAULT_INSTALLER_RELEASE_TAG: string =
+  process.env.RELEASE_TAG_INSTALLER?.trim() || 'latest';
+
+export const DEFAULT_ENGINE_RELEASE_TAG: string =
+  process.env.RELEASE_TAG_ENGINE?.trim() || `v${APP_VERSION}`;
+
+export const DEFAULT_LANCEDB_RELEASE_TAG: string =
+  process.env.RELEASE_TAG_DB?.trim() || 'data-v1';
 
 /**
  * 사전 구축된 법령 벡터 데이터베이스 GitHub Release 다이렉트 다운로드 URL

@@ -23,12 +23,11 @@
     "dev:server": "tsx watch --include .env src/server/ragServer.ts",
     "tauri": "node scripts/tauri-cli.js",
     "engine:pack": "tsx src/scripts/packageEngine.ts",
-    "engine:release": "tsx src/scripts/packageEngine.ts --upload",
+    "engine:release": "tsx src/scripts/releaseEngine.ts",
     "build:mac": "tsx src/scripts/buildRelease.ts --platform mac",
     "build:win": "tsx src/scripts/buildRelease.ts --platform win",
     "build:release": "tsx src/scripts/buildRelease.ts",
-    "release:app": "tsx src/scripts/releaseInstallers.ts",
-    "release:app:all": "tsx src/scripts/releaseInstallers.ts --all"
+    "release:app": "tsx src/scripts/releaseInstallers.ts"
   },
   "keywords": [],
   "author": "",

@@ -95,18 +95,25 @@ if exist "scripts\sync-version.js" (
     if %ERRORLEVEL% NEQ 0 goto :ERR_SYNC
 )
 
-REM Windows backend engine packaging
-if not exist "%OUTPUT_DIR%\korean_law_engine_win_x64.tar.gz" (
-    echo.
-    echo - Windows backend engine runtime not found in release. Packaging engine ...
+REM Windows backend engine packaging & GitHub Release
+echo.
+echo ========================================================
+echo - Packaging and releasing Windows backend engine runtime ...
+echo ========================================================
+
+REM GitHub Release 업로드 시도 (gh CLI 인증 시 v1.0.0으로 자동 업로드, 실패 시 로컬 패키징 fallback)
+call %PNPM_EXEC% run engine:release
+if %ERRORLEVEL% NEQ 0 (
+    echo [WARN] engine:release failed (gh CLI authentication needed). Running engine:pack locally...
     call %PNPM_EXEC% run engine:pack
-    if exist "release\korean_law_engine_win_x64.tar.gz" (
-        copy /y "release\korean_law_engine_win_x64.tar.gz" "%OUTPUT_DIR%\korean_law_engine_win_x64.tar.gz" >nul
-        if exist "release\korean_law_engine_win_x64.tar.gz.sha256" (
-            copy /y "release\korean_law_engine_win_x64.tar.gz.sha256" "%OUTPUT_DIR%\korean_law_engine_win_x64.tar.gz.sha256" >nul
-        )
-        echo - Windows backend engine packaged and deployed to %OUTPUT_DIR%.
+)
+
+if exist "release\korean_law_engine_win_x64.tar.gz" (
+    copy /y "release\korean_law_engine_win_x64.tar.gz" "%OUTPUT_DIR%\korean_law_engine_win_x64.tar.gz" >nul
+    if exist "release\korean_law_engine_win_x64.tar.gz.sha256" (
+        copy /y "release\korean_law_engine_win_x64.tar.gz.sha256" "%OUTPUT_DIR%\korean_law_engine_win_x64.tar.gz.sha256" >nul
     )
+    echo - Windows backend engine deployed to %OUTPUT_DIR%.
 )
 
 echo.

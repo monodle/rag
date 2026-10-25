@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { APP_VERSION, ENGINE_ARCHIVE_NAMES, APP_CONFIG } from '../config/constants.js';
+import {
+  APP_VERSION,
+  APP_CONFIG,
+  DEFAULT_INSTALLER_RELEASE_TAG,
+  DEFAULT_ENGINE_RELEASE_TAG,
+  DEFAULT_LANCEDB_RELEASE_TAG,
+} from '../config/constants.js';
 import { calculateSha256 } from '../utils/fileUtils.js';
 
 interface InstallerAsset {
@@ -18,17 +24,34 @@ interface ReleaseConfig {
   readonly releaseDir: string;
   readonly tag: string;
   readonly title: string;
-  readonly includeEngines: boolean;
 }
 
-const DEFAULT_TAG = 'latest';
+const DEFAULT_TAG = DEFAULT_INSTALLER_RELEASE_TAG;
+
+/**
+ * 릴리즈 태그가 다른 릴리즈 채널(엔진, 벡터 DB)과 충돌하지 않는지 검증합니다.
+ */
+function validateReleaseTag(tag: string): void {
+  if (tag === DEFAULT_ENGINE_RELEASE_TAG || (tag.startsWith('v') && /^v\d+\.\d+\.\d+/.test(tag))) {
+    throw new Error(
+      `[오배포 방지] 엔진 런타임 전용 릴리즈 태그('${tag}')로 앱 인스톨러를 배포할 수 없습니다.\n` +
+      `설치 파일은 반드시 '${DEFAULT_INSTALLER_RELEASE_TAG}' 릴리즈 채널에 배포되어야 합니다.`
+    );
+  }
+
+  if (tag === DEFAULT_LANCEDB_RELEASE_TAG || tag.startsWith('data-')) {
+    throw new Error(
+      `[오배포 방지] 벡터 데이터베이스 전용 릴리즈 태그('${tag}')로 앱 인스톨러를 배포할 수 없습니다.\n` +
+      `설치 파일은 반드시 '${DEFAULT_INSTALLER_RELEASE_TAG}' 릴리즈 채널에 배포되어야 합니다.`
+    );
+  }
+}
 
 /**
  * CLI 인자를 파싱하여 릴리즈 설정을 구성합니다.
  */
 function parseArgs(): ReleaseConfig {
   const args = process.argv.slice(2);
-  const includeEngines = args.includes('--all') || args.includes('--with-engines');
 
   let customTag: string | null = null;
   const tagIndex = args.indexOf('--tag');
@@ -41,8 +64,10 @@ function parseArgs(): ReleaseConfig {
     }
   }
 
-  const version = APP_VERSION;
   const tag = customTag || DEFAULT_TAG;
+  validateReleaseTag(tag);
+
+  const version = APP_VERSION;
   const title = tag === 'latest'
     ? `Korean Law RAG App (Latest Release - v${version})`
     : `Korean Law RAG App ${tag}`;
@@ -51,7 +76,6 @@ function parseArgs(): ReleaseConfig {
     releaseDir: path.resolve('release'),
     tag,
     title,
-    includeEngines,
   };
 }
 
@@ -85,11 +109,12 @@ async function collectInstallerAssets(releaseDir: string): Promise<InstallerAsse
   const files = fs.readdirSync(releaseDir);
   const targetFiles = files.filter((file) => {
     const lower = file.toLowerCase();
-    // macOS dmg 및 Windows exe 파일만 수집 (msi, zip, sha256 제외)
+    // macOS dmg 및 Windows exe 파일만 수집 (msi, zip, tar.gz, sha256 제외)
     return (
       (lower.endsWith('.dmg') || lower.endsWith('.exe')) &&
       !lower.endsWith('.msi') &&
       !lower.endsWith('.zip') &&
+      !lower.endsWith('.tar.gz') &&
       !lower.endsWith('.sha256')
     );
   });
@@ -124,28 +149,6 @@ async function collectInstallerAssets(releaseDir: string): Promise<InstallerAsse
   }
 
   return assets;
-}
-
-/**
- * 백엔드 엔진 아카이브 파일들을 검색하여 수집합니다.
- */
-function collectEngineAssets(releaseDir: string): string[] {
-  const engineFiles = [
-    ENGINE_ARCHIVE_NAMES.mac,
-    `${ENGINE_ARCHIVE_NAMES.mac}.sha256`,
-    ENGINE_ARCHIVE_NAMES.win,
-    `${ENGINE_ARCHIVE_NAMES.win}.sha256`,
-  ];
-
-  const matched: string[] = [];
-  for (const file of engineFiles) {
-    const fullPath = path.join(releaseDir, file);
-    if (fs.existsSync(fullPath)) {
-      matched.push(fullPath);
-    }
-  }
-
-  return matched;
 }
 
 /**
@@ -205,8 +208,7 @@ async function releaseInstallers(): Promise<void> {
   const config = parseArgs();
 
   console.log(`📌 대상 릴리즈 태그: ${config.tag}`);
-  console.log(`📂 검색 디렉토리: ${config.releaseDir}`);
-  console.log(`⚙️ 엔진 런타임 동시 업로드: ${config.includeEngines ? '포함' : '인스톨러 전용'}\n`);
+  console.log(`📂 검색 디렉토리: ${config.releaseDir}\n`);
 
   // 2. 인스톨러 파일 및 체크섬 수집
   const installerAssets = await collectInstallerAssets(config.releaseDir);
@@ -220,19 +222,7 @@ async function releaseInstallers(): Promise<void> {
     uploadFiles.push(asset.checksumPath);
   }
 
-  // 3. 엔진 파일 포함 옵션 처리
-  if (config.includeEngines) {
-    const engineFiles = collectEngineAssets(config.releaseDir);
-    if (engineFiles.length > 0) {
-      console.log('\n⚙️ 추가 업로드 엔진 런타임 파일:');
-      for (const ef of engineFiles) {
-        console.log(`  - ${path.basename(ef)}`);
-        uploadFiles.push(ef);
-      }
-    }
-  }
-
-  // 4. 대상 릴리즈 존재 확인
+  // 3. 대상 릴리즈 존재 확인
   const viewRes = spawnSync('gh', ['release', 'view', config.tag], { encoding: 'utf-8' });
   const releaseExists = viewRes.status === 0;
   const notes = generateReleaseNotes(installerAssets, config.tag);
@@ -274,7 +264,7 @@ async function releaseInstallers(): Promise<void> {
     }
   }
 
-  // 5. 저장소 정보 확인
+  // 4. 저장소 정보 확인
   const repoView = spawnSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
     encoding: 'utf-8',
   });
